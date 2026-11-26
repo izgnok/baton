@@ -1,0 +1,42 @@
+@font-face {
+  font-family: 'Pretendard';
+  src: url('vendor/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 45 920;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #FFFFFF;
+  --card: #F2F4F6;
+  --line: #E5E8EB;
+  --text: #191F28;
+  --sub: #8B95A1;
+  --accent: #3182F6;
+  --accent-press: #1B64DA;
+  --accent-soft: #E8F3FF;
+  --danger: #F04452;
+  --success: #03B26C;
+  --warn: #FF9F00;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --backdrop: rgba(25, 31, 40, 0.45);
+
+  --r-card: 16px;
+  --r-btn: 12px;
+  --r-bubble: 18px;
+  --font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171C;
+    --card: #202027;
+    --line: #2C2C35;
+    --text: #ECECEF;
+    --sub: #7E8590;
+    --accent-soft: #1B2A44;
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --backdrop: rgba(0, 0, 0, 0.6);
+  }
+}

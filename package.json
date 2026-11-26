@@ -1,0 +1,6 @@
+{
+  "name": "claude-rooms",
+  "private": true,
+  "workspaces": ["server", "app", "shared"],
+  "scripts": { "test": "npm test --workspaces --if-present" }
+}

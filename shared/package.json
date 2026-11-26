@@ -1,0 +1,6 @@
+{
+  "name": "@rooms/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": { "./protocol.js": "./protocol.js", "./remote.js": "./remote.js", "./paths.js": "./paths.js", "./manifest.js": "./manifest.js" }
+}

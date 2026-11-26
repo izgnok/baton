@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","cwd":"/x","model":"m","session_id":"11111111-2222-3333-4444-555555555555"}
+not json
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"11111111-2222-3333-4444-555555555555"}
+{broken
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"11111111-2222-3333-4444-555555555555","permission_denials":[{"tool_name":"Bash"}]}
