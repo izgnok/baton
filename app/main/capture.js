@@ -92,10 +92,18 @@ export async function startCapture(outDir) {
   fs.writeFileSync(path.join(claudeDir, 'skills', 'summarize', 'SKILL.md'), '---\nname: summarize\ndescription: 긴 글을 세 줄로 요약해요\n---\n');
   fs.mkdirSync(path.join(claudeDir, 'skills', 'review-pr'), { recursive: true });
   fs.writeFileSync(path.join(claudeDir, 'skills', 'review-pr', 'SKILL.md'), '---\nname: review-pr\ndescription: 변경한 코드를 검토해요\n---\n');
-  // 내 PC 레포 목록에 payment-api 가 있는 상태(레포 탭의 "자동 연결됨" 표시)
+  // 내 PC 레포 목록에 payment-api·payment-web 이 있는 상태(방에 레포가 생기면 자동으로 이어진다)
   const mine = path.join(tmp, 'payment-api');
   const originPath = path.join(tmp, 'origin.git');
-  saveConfig({ serverUrl: null, token: null, rooms: {}, repoIndex: { scannedAt: Date.now() - 3600 * 1000, repos: [{ path: mine, name: 'payment-api', remoteUrl: originPath }] } });
+  const webMine = path.join(tmp, 'payment-web');
+  const webOrigin = path.join(tmp, 'web-origin.git');
+  saveConfig({
+    serverUrl: null, token: null, rooms: {},
+    repoIndex: { scannedAt: Date.now() - 3600 * 1000, repos: [
+      { path: mine, name: 'payment-api', remoteUrl: originPath },
+      { path: webMine, name: 'payment-web', remoteUrl: webOrigin },
+    ] },
+  });
   const { startServer } = await import('../../server/src/index.js');
   const server = await startServer({ port: 0, dataDir: path.join(tmp, 'data') });
   const url = `http://localhost:${server.port}`;
@@ -143,7 +151,7 @@ export async function startCapture(outDir) {
     const notes = path.join(tmp, 'notes');
     fs.mkdirSync(notes);
 
-    // 레포: 하나는 A 쪽에 연결(정상, 방 작업 폴더 있음), 하나는 연결 안 됨
+    // 레포: 둘 다 이 맥에 원본이 있다(payment-api 는 기준 release/15.7.0 → 작업 feature/ABC-123, payment-web 은 기준 develop 만)
     const origin = originPath;
     const work = path.join(tmp, 'work');
     git(['init', '--bare', '-b', 'main', origin]);
@@ -156,13 +164,17 @@ export async function startCapture(outDir) {
     git(['commit', '-m', 'init'], work);
     git(['remote', 'add', 'origin', origin], work);
     git(['push', '-u', 'origin', 'main'], work);
-    git(['push', 'origin', 'main:refs/heads/feature/ABC-123'], work);
+    git(['push', 'origin', 'main:refs/heads/release/15.7.0'], work);
     git(['clone', origin, mine]);
-    const repo1 = await handlers.addRepo({ roomId, name: 'payment-api', remoteUrl: origin, branch: 'feature/ABC-123' });
-    await handlers.addRepo({ roomId, name: 'payment-web', remoteUrl: 'https://github.com/example/payment-web.git', branch: 'develop' });
-    await handlers.linkRepo({ roomId, repoId: repo1.id, localPath: mine });
-    // 방 작업 폴더가 이미 만들어진 상태
-    await ensureWorktree({ sourcePath: mine, worktreePath: worktreePath(roomId, repo1), branch: 'feature/ABC-123' });
+    const webWork = path.join(tmp, 'web-work');
+    git(['init', '--bare', '-b', 'develop', webOrigin]);
+    git(['init', '-b', 'develop', webWork]);
+    fs.writeFileSync(path.join(webWork, 'README.md'), '# payment-web\n');
+    git(['add', '.'], webWork);
+    git(['commit', '-m', 'init'], webWork);
+    git(['remote', 'add', 'origin', webOrigin], webWork);
+    git(['push', '-u', 'origin', 'develop'], webWork);
+    git(['clone', webOrigin, webMine]);
     await handlers.addReadDir({ roomId, path: notes });
 
     // B 가 받는 run.start 마다 차례로 시나리오를 돌린다
@@ -185,7 +197,11 @@ export async function startCapture(outDir) {
     await c.request(MSG.CHAT_SEND, { roomId, text: '저는 재시도 쪽을 볼게요' });
     await sleep(50);
 
+    // 레포는 방 도구(room.repo_set)로만 만들어진다: Claude 가 첫 요청에서 정한 것으로 한다(기준 브랜치만, 작업 브랜치는 뒤에서)
+    let repo1;
     await ask('@claude 결제 모듈에서 타임아웃 처리 위치 찾아줘', async ({ requestId, transcriptVersion }) => {
+      repo1 = await b.request(MSG.ROOM_REPO_SET, { requestId, name: 'payment-api', remoteUrl: origin, baseBranch: 'release/15.7.0' });
+      await b.request(MSG.ROOM_REPO_SET, { requestId, name: 'payment-web', remoteUrl: webOrigin, baseBranch: 'develop' });
       await event(requestId, text(MD_FIND));
       await event(requestId, tool('t1', 'Read', { file_path: '/Users/haeun/repos/payment-api/src/payment/timeout.js' }));
       await event(requestId, result('t1', 'export const PAYMENT_TIMEOUT_MS = 5000;'));
@@ -202,7 +218,7 @@ export async function startCapture(outDir) {
       await event(requestId, {
         type: 'rooms_code_changes',
         results: [{
-          repoId: repo1.id, name: 'payment-api', branch: 'feature/ABC-123', ahead: 1, truncated: false,
+          repoId: repo1.id, name: 'payment-api', branch: 'release/15.7.0', ahead: 1, truncated: false,
           files: [{ status: 'M', path: 'src/payment/timeout.js' }, { status: '??', path: 'docs/retry.md' }],
           diff: DIFF,
         }],
@@ -219,12 +235,22 @@ export async function startCapture(outDir) {
       });
     });
 
+    // 내 맥이 같은 원격의 원본을 찾아 잇고 나면, 방 작업 폴더가 이미 만들어진 상태로 둔다
+    await waitFor(async () => {
+      const { results } = await handlers.checkRepos({ roomId });
+      return results.length === 2 && results.every((r) => r.localPath);
+    }, '원본 자동 연결');
+    await ensureWorktree({ sourcePath: mine, worktreePath: worktreePath(roomId, repo1), branch: 'release/15.7.0' });
+
     await ask('@claude 정리 문서 만들어줘', ({ requestId }) => b.request(MSG.RUN_FAIL, { requestId, reason: 'BRANCH_NOT_ON_REMOTE' }));
 
     // 실행 중 + 승인 대기 상태로 남겨 둔다(신호는 계속 보낸다)
     let runningId = 0;
     await ask('@claude 재시도 정책 초안도 써줘', async ({ requestId }) => {
       runningId = requestId;
+      // 작업 브랜치를 정한다(방 도구 room_set_repo 가 성공하면 채팅에 남는 한 줄)
+      await b.request(MSG.ROOM_REPO_SET, { requestId, repoId: repo1.id, remoteUrl: origin, baseBranch: 'release/15.7.0', workBranch: 'feature/ABC-123' });
+      await event(requestId, { type: 'rooms_repo_set', text: 'payment-api를 release/15.7.0에서 feature/ABC-123으로 작업해요' });
       await event(requestId, thinking());
       await event(requestId, tool('r1', 'Agent', { description: '로그 확인', subagent_type: 'Explore', prompt: '결제 실패 로그를 확인해줘' }));
       await event(requestId, inner('r1', text('실패 로그를 확인하고 있어요.')));
@@ -269,7 +295,16 @@ export async function startCapture(outDir) {
 
     await lightDark('');
     const at = (tab, extra = {}) => ({ roomId, tab, ...extra });
-    await shoot(scene('04-room-repos', 'room', at('repos')));
+    // 레포 카드 상태 점: payment-api 는 이 맥에서 고친 내용 있음, payment-web 은 정상(방 화면이 열린 뒤에 알림을 보낸다)
+    const reposScene = async (name, dark = false) => {
+      const shot = shoot(scene(name, 'room', at('repos'), {}, dark));
+      for (let i = 0; i < 3; i++) { // 화면이 열리는 시점이 장면마다 달라 몇 번 나눠 보낸다(같은 값이라 겹쳐도 같다)
+        await sleep(400);
+        emit('rooms:event', { type: 'local.code', roomId, repoId: repo1.id, status: 'local_changes' });
+      }
+      await shot;
+    };
+    await reposScene('04-room-repos');
     await shoot(scene('05-shared-md', 'room', at('shared', { preview: 'outputs/정리.md' })));
     await shoot(scene('06-shared-html', 'room', at('shared', { preview: 'outputs/report.html' })));
     await shoot(scene('07-members', 'room', at('members')));
@@ -284,7 +319,7 @@ export async function startCapture(outDir) {
     emit('update', { count: 0, subjects: [], serverMismatch: false });
 
     await lightDark('-dark');
-    await shoot(scene('04-room-repos-dark', 'room', at('repos'), {}, true));
+    await reposScene('04-room-repos-dark', true);
     await shoot(scene('07-members-dark', 'room', at('members'), {}, true));
     await shoot(scene('09-autocomplete-dark', 'room', at('members'), { composer: '/' }, true));
   }

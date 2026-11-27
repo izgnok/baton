@@ -8,7 +8,7 @@ const toRoom = (r) => r && ({
   createdAt: r.created_at, defaultModel: r.default_model ?? '', defaultEffort: r.default_effort ?? '',
   isPublic: r.is_public !== 0,
 });
-// 레포 + 코드 상태(없으면 code: null). branch 는 baseBranch 별칭 — 앱이 정리되면(3단계) 뺀다
+// 레포 + 코드 상태(없으면 code: null)
 const REPO_SELECT = `SELECT r.*, c.base_commit AS cs_base, c.snapshot AS cs_snapshot, c.size AS cs_size,
   c.updated_by AS cs_by, c.updated_at AS cs_at,
   (SELECT COUNT(*) FROM code_parts p WHERE p.repo_id = r.id) AS cs_parts
@@ -16,7 +16,6 @@ const REPO_SELECT = `SELECT r.*, c.base_commit AS cs_base, c.snapshot AS cs_snap
 const toRepo = (r) => r && ({
   id: r.id, name: r.name, remoteUrl: r.remote_url,
   baseBranch: r.base_branch, workBranch: r.work_branch, originBranch: r.origin_branch ?? r.base_branch,
-  branch: r.base_branch,
   code: r.cs_snapshot ? {
     baseCommit: r.cs_base, snapshot: r.cs_snapshot, size: r.cs_size, parts: r.cs_parts, updatedBy: r.cs_by, updatedAt: r.cs_at,
   } : null,
@@ -222,22 +221,6 @@ export function getRoomState(db, userId, roomId) {
   return { room: toRoom(r), members, repos };
 }
 
-export function addRepo(db, userId, roomId, { name, remoteUrl, branch }) {
-  ownedRoom(db, userId, roomId);
-  const base = text(branch);
-  const id = Number(db.prepare(
-    'INSERT INTO room_repos (room_id, name, remote_url, base_branch, origin_branch) VALUES (?, ?, ?, ?, ?)',
-  ).run(roomId, text(name), text(remoteUrl), base, base).lastInsertRowid);
-  return repoById(db, id);
-}
-
-function ownedRepo(db, userId, repoId) {
-  const repo = db.prepare('SELECT * FROM room_repos WHERE id = ?').get(repoId);
-  if (!repo) throw new Error('NOT_FOUND');
-  ownedRoom(db, userId, repo.room_id);
-  return repo;
-}
-
 /** 레포의 코드 상태 행과 조각 행(체인)을 모두 지운다. 코드 상태가 있었으면 true. 조각 파일은 호출부가 지운다 */
 function dropCode(db, repoId) {
   db.prepare('DELETE FROM code_parts WHERE repo_id = ?').run(repoId);
@@ -261,24 +244,6 @@ function branchName(v) {
   const s = text(v);
   if (s.startsWith('-')) throw new Error('INVALID_INPUT');
   return s;
-}
-
-export function updateRepo(db, userId, repoId, patch) {
-  const repo = ownedRepo(db, userId, repoId);
-  const next = {
-    name: repo.name, remote_url: repo.remote_url,
-  };
-  if (patch.name !== undefined) next.name = text(patch.name);
-  if (patch.remoteUrl !== undefined) next.remote_url = text(patch.remoteUrl);
-  const base = patch.branch !== undefined ? text(patch.branch) : repo.base_branch;
-  db.prepare('UPDATE room_repos SET name = ?, remote_url = ? WHERE id = ?').run(next.name, next.remote_url, repoId);
-  resetBase(db, repoId, base); // 기준이 바뀌면 코드 상태를 비운다(묶음 파일은 호출부가 지움)
-  return repoById(db, repoId);
-}
-
-export function removeRepo(db, userId, repoId) {
-  ownedRepo(db, userId, repoId);
-  db.prepare('DELETE FROM room_repos WHERE id = ?').run(repoId); // code_states 는 CASCADE
 }
 
 const repoNameOf = (url) => url.replace(/\/+$/, '').split(/[/:]/).pop().replace(/\.git$/, '');

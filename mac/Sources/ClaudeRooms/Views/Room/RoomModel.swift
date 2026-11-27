@@ -12,12 +12,12 @@ indirect enum ClaudePart: Equatable {
     /// 서브에이전트를 띄운 도구 카드. parts 는 그 안에서 한 일
     case agent(key: String, title: String, running: Bool, parts: [ClaudePart])
     case error(String)
-    /// 레포 브랜치를 옮겼다는 한 줄(rooms_branch_changes)
-    case branch(key: String, text: String)
+    /// 공지 한 줄. 레포를 정했다(rooms_repo_set)·공유하지 못했다(rooms_code_too_big, warn)
+    case notice(key: String, text: String, warn: Bool)
 
     var id: String {
         switch self {
-        case .text(let k, _), .tool(let k, _, _, _), .thinking(let k, _, _), .agent(let k, _, _, _), .branch(let k, _): k
+        case .text(let k, _), .tool(let k, _, _, _), .thinking(let k, _, _), .agent(let k, _, _, _), .notice(let k, _, _): k
         case .error(let s): "error:\(s)"
         }
     }
@@ -74,12 +74,11 @@ struct ParsedEvent: Equatable {
                     }
                 }
             }
-        case "rooms_branch_changes":
-            for r in ev["results"]?.array ?? [] {
-                let name = r["repoName"]?.string ?? "", branch = r["branch"]?.string ?? ""
-                let text = "\(name) 브랜치를 \(branch)로 옮겼어요" + (r["pending"]?.bool == true ? " · push 하면 모두 따라가요" : "")
-                parts.append(.branch(key: "\(id):b\(r["repoId"]?.int ?? 0)", text: text))
-            }
+        case "rooms_repo_set":
+            if let t = ev["text"]?.string, !t.isEmpty { parts.append(.notice(key: "\(id):r", text: t, warn: false)) }
+        case "rooms_code_too_big":
+            let names = (ev["repos"]?.array ?? []).compactMap(\.string)
+            if !names.isEmpty { parts.append(.notice(key: "\(id):tb", text: PanelText.tooBigText(names), warn: true)) }
         case "rooms_code_changes":
             for r in ev["results"]?.array ?? [] {
                 let files = (r["files"]?.array ?? []).map { CodeResult.File(status: $0["status"]?.string ?? "", path: $0["path"]?.string ?? "") }
@@ -282,10 +281,13 @@ final class RoomModel {
             if buffered, let old = messages.first(where: { $0.id == m.id }), Self.rank(m.status) < Self.rank(old.status) { return }
             upsert(m)
             if m.kind == "claude_request", m.status == "done" { sharedChanged() } // Claude 가 만든 파일이 공유 목록에 생겼을 수 있다
+            if m.kind == "claude_request", m.userId == me, m.status == "done" { repos.codeStatus = repos.codeStatus.filter { $0.value != "local_changes" } } // 내 실행이 끝나면 내가 고친 내용은 함께 올라갔다
         case "shared.changed":
             if p["roomId"]?.int == roomId { sharedChanged() }
         case "local.repos":
             if p["roomId"]?.int == roomId, tab == "repos" { Task { await repos.refresh() } }
+        case "local.code":
+            if p["roomId"]?.int == roomId, let rid = p["repoId"]?.int { repos.codeStatus[rid] = p["status"]?.string }
         case "local.sharedConflict":
             if p["roomId"]?.int == roomId { app.toast(PanelText.conflictToast(count: p["paths"]?.array?.count ?? 0)) }
         case "room.state":

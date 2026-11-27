@@ -154,27 +154,6 @@ export function attachWs(server, { db, files }) {
       members.forEach((id) => sendUser(id, { type: MSG.ROOM_DELETE, roomId }));
       if (wasPublic) roomsChanged();
     },
-    [MSG.REPO_ADD]: (u, m) => {
-      const roomId = Number(m.roomId);
-      const repo = R.addRepo(db, u, roomId, m);
-      broadcastState(roomId);
-      return repo;
-    },
-    [MSG.REPO_UPDATE]: (u, m) => {
-      const repoId = Number(m.repoId);
-      const before = db.prepare('SELECT room_id, base_branch FROM room_repos WHERE id = ?').get(repoId);
-      const repo = R.updateRepo(db, u, repoId, m);
-      if (repo.baseBranch !== before.base_branch) codeCleared(before.room_id, repo.id, u);
-      broadcastState(before.room_id);
-      return repo;
-    },
-    [MSG.REPO_REMOVE]: (u, m) => {
-      const repoId = Number(m.repoId);
-      const row = db.prepare('SELECT room_id FROM room_repos WHERE id = ?').get(repoId);
-      R.removeRepo(db, u, repoId);
-      files.removeParts(row.room_id, repoId);
-      broadcastState(row.room_id);
-    },
     // 실행 중 Claude 의 방 도구. 멤버 누구든 그 요청의 요청자면 된다(방은 그 요청의 방)
     [MSG.ROOM_REPO_SET]: (u, m) => {
       const { roomId } = ownRunningRequest(u, m);

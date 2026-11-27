@@ -97,7 +97,7 @@ test('setCodeApplied: 레포별 마지막으로 맞춘 스냅샷을 넣고 null 
   assert.deepEqual(setCodeApplied(b, 1, 8, null).rooms[1].code, { 7: 'abc' });
   assert.deepEqual(setCodeApplied(a, 1, 7, null).rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'] });
   assert.deepEqual(setCodeApplied({ rooms: {} }, 4, 1, 'z').rooms[4], { repos: {}, code: { 1: 'z' } });
-  // 옛 config 의 pendingBranches 는 읽어도 어디에도 쓰이지 않는다
-  saveConfig({ serverUrl: null, token: null, rooms: { 1: { repos: {}, pendingBranches: { 7: 'x' } } } });
+  // 옛 config 의 브랜치 대기 목록(지금은 없는 칸)은 읽어도 어디에도 쓰이지 않는다
+  saveConfig({ serverUrl: null, token: null, rooms: { 1: { repos: {}, branchWaits: { 7: 'x' } } } });
   assert.deepEqual(setCodeApplied(loadConfig(), 1, 7, 'k').rooms[1].code, { 7: 'k' });
 });

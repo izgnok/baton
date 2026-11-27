@@ -196,12 +196,12 @@ struct ClaudePartView: View {
         case .thinking(let key, let text, let seconds): ThinkingLineView(model: model, key: key, text: text, seconds: seconds)
         case .agent(let key, let title, let running, let parts): AgentCardView(model: model, key: key, title: title, running: running, parts: parts)
         case .error(let text): Text(text).typo(.ui).foregroundStyle(Theme.dangerText)
-        case .branch(_, let text):
+        case .notice(_, let text, let warn):
             HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
+                Image(systemName: warn ? "exclamationmark.triangle" : "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
                 Text(text).lineLimit(2).truncationMode(.middle).help(text)
             }
-            .typo(.caption).foregroundStyle(Theme.sub)
+            .typo(.caption).foregroundStyle(warn ? Theme.warnText : Theme.sub)
         }
     }
 }

@@ -23,12 +23,6 @@ public enum PanelText {
         return "\(text). 방 작업 폴더 \(list)는 남겨 뒀어요"
     }
 
-    /// 레포 삭제 결과 토스트
-    public static func repoRemovedText(keptReason: String?) -> String {
-        guard let keptReason else { return "레포를 삭제했어요" }
-        return "레포를 삭제했어요. 방 작업 폴더는 남겨 뒀어요 (\(keptText(keptReason)))"
-    }
-
     /// "멤버 n명" (방 머리줄·공개 방 카드)
     public static func memberCountText(_ n: Int) -> String { "멤버 \(n)명" }
 
@@ -38,14 +32,70 @@ public enum PanelText {
     /// 공개 여부를 바꾼 뒤 토스트
     public static func publicToast(_ isPublic: Bool) -> String { isPublic ? "공개 방으로 바꿨어요" : "비공개 방으로 바꿨어요" }
 
-    /// 레포 카드 상태 한 줄 (RP4). ok 면 정상, 아니면 위험 글자
-    public static func repoStatus(block: String?, indexed: Bool) -> (text: String, ok: Bool) {
-        switch block {
-        case "MISSING": ("폴더 연결 필요", false)
-        case "REMOTE_MISMATCH": ("고른 폴더의 원격 주소가 달라요", false)
-        case let b?: (b, false)
-        case nil: (indexed ? "정상 · 자동 연결" : "정상", true)
+    // MARK: 레포 카드(표시 전용)
+
+    /// 레포 카드 상태 점
+    public enum RepoDot: Equatable, Sendable { case ok, receiving, localChanges, conflict, failed }
+
+    public static let noReposText = "Claude에게 어떤 레포로 작업할지 말해 보세요"
+
+    /// 카드 첫 줄. 같은 이름 레포가 둘 이상이면 기준 브랜치를 붙여 구분한다(`insight · develop`)
+    public static func repoTitle(name: String, baseBranch: String, sameName: Bool) -> String {
+        sameName && !baseBranch.isEmpty ? "\(name) · \(baseBranch)" : name
+    }
+
+    /// 카드 둘째 줄: `기준 → 작업`, 작업 브랜치가 없으면 기준만
+    public static func branchLine(baseBranch: String, workBranch: String) -> String {
+        workBranch.isEmpty ? baseBranch : "\(baseBranch) → \(workBranch)"
+    }
+
+    /// 상태 점. checkRepos 결과(block·cloning)와 `local.code` 상태(ok·local_changes·conflict·failed)를 합친다
+    public static func repoDot(block: String?, cloning: Bool, code: String?) -> RepoDot {
+        if block == "REMOTE_MISMATCH" || code == "failed" { return .failed }
+        if code == "conflict" { return .conflict }
+        if cloning || block != nil { return .receiving } // 원본이 아직 없으면 곧 자동으로 받는다
+        return code == "local_changes" ? .localChanges : .ok
+    }
+
+    /// 점 이름(툴팁)
+    public static func repoDotLabel(_ dot: RepoDot) -> String {
+        switch dot {
+        case .ok: "정상"
+        case .receiving: "받는 중"
+        case .localChanges: "이 맥에서 고친 내용 있음"
+        case .conflict: "충돌"
+        case .failed: "맞추지 못함"
         }
+    }
+
+    /// 카드 아래 한 줄(정상·받는 중이면 없음)
+    public static func repoNote(_ dot: RepoDot) -> String? {
+        switch dot {
+        case .localChanges: "이 맥에서 고친 내용이 있어요 · 다음 요청 때 함께 올라가요"
+        case .conflict: "기준 브랜치와 충돌해요"
+        case .failed: "맞추지 못했어요"
+        case .ok, .receiving: nil
+        }
+    }
+
+    /// 카드에 마우스를 올렸을 때: 원격 주소·원본·사본 경로(·처음 갈라진 브랜치는 기준과 다를 때만)
+    public static func repoTooltip(remoteUrl: String, localPath: String?, worktreePath: String,
+                                   baseBranch: String, originBranch: String) -> String {
+        var lines = ["원격 주소: \(remoteUrl)", "원본: \(localPath ?? "이 맥에 아직 없어요 · 자동으로 받는 중")", "사본: \(worktreePath)"]
+        if !originBranch.isEmpty, originBranch != baseBranch { lines.append("처음: \(originBranch)") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 공유하지 못한 레포 안내(채팅 한 줄). 마지막 이름의 받침으로 조사를 고른다
+    public static func tooBigText(_ names: [String]) -> String {
+        let list = names.joined(separator: ", ")
+        return "변경이 너무 커서 \(list)\(hasFinalConsonant(list) ? "을" : "를") 공유하지 못했어요 · push 해 주세요"
+    }
+
+    /// 한글 받침 여부. 한글이 아니면(영문·숫자 끝) 받침 없음으로 본다
+    private static func hasFinalConsonant(_ word: String) -> Bool {
+        guard let c = word.trimmingCharacters(in: .whitespaces).unicodeScalars.last?.value, (0xAC00...0xD7A3).contains(c) else { return false }
+        return (c - 0xAC00) % 28 != 0
     }
 
     /// 공유 충돌 토스트

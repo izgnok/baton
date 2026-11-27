@@ -382,13 +382,13 @@ test('room.fork: 멤버만, 복사·방장·안내, 첫 실행은 fork 로 이�
   const C = await login(c.token);
   const room = await A.ok(MSG.ROOM_CREATE, { name: '원래 방' });
   await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
-  await A.ok(MSG.REPO_ADD, { roomId: room.id, name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'dev' });
   await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, defaultModel: 'sonnet', defaultEffort: 'low' });
 
   // 원래 방에서 한 번 실행해 세션·대화 원본·공유 파일을 만든다
   const startP = A.next((m) => m.type === MSG.RUN_START);
   const msg = await A.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 기억해' });
   assert.equal((await timeout(startP)).runStart.fork, false);
+  await A.ok(MSG.ROOM_REPO_SET, { requestId: msg.id, remoteUrl: 'git@h:a/r.git', name: 'r', baseBranch: 'dev' });
   await A.ok(MSG.RUN_FINISH, {
     requestId: msg.id, transcriptVersion: 0, sessionId: SID1, transcript: '{"t":"원본"}\n',
     sharedChanges: [{ path: 'memory/INDEX.md', contentBase64: Buffer.from('# 목차').toString('base64') }],
@@ -405,7 +405,7 @@ test('room.fork: 멤버만, 복사·방장·안내, 첫 실행은 fork 로 이�
   // 새 방 멤버 둘 모두 목록에 있고, 대화 원본·공유 파일이 복사됨, 안내 한 줄뿐
   assert.equal((await A.ok(MSG.ROOM_LIST)).rooms.some((r) => r.id === f.id), true);
   const opened = await A.ok(MSG.ROOM_OPEN, { roomId: f.id });
-  assert.deepEqual(opened.state.repos.map((r) => [r.name, r.branch]), [['r', 'dev']]);
+  assert.deepEqual(opened.state.repos.map((r) => [r.name, r.baseBranch]), [['r', 'dev']]);
   assert.deepEqual(opened.state.members.map((m) => [m.name, m.isOwner]), [['fork-a', false], ['fork-b', true]]);
   assert.deepEqual(opened.messages.map((m) => [m.kind, m.body]), [['notice', '원래 방 방에서 갈라졌어요']]);
   assert.equal(await (await get(`/rooms/${f.id}/transcript`, a.token)).text(), '{"t":"원본"}\n');
@@ -468,6 +468,14 @@ const uploadsOf = (roomId, dir = dataDir) => {
   try { return fs.readdirSync(path.join(dir, 'rooms', String(roomId), 'code')).filter((n) => n.startsWith('.upload-')); } catch { return []; }
 };
 
+// 다른 방의 레포가 필요할 때: 그 방에서 실행을 하나 시작하고 방 도구(room.repo_set)로 레포를 만든다
+async function repoIn(who, room, payload) {
+  const started = who.next((m) => m.type === MSG.RUN_START);
+  const msg = await who.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 하나' });
+  await timeout(started);
+  return who.ok(MSG.ROOM_REPO_SET, { requestId: msg.id, ...payload });
+}
+
 // A(방장)·B 가 있는 방과, 요청자를 정해 실행을 시작·끝내는 도우미
 async function codeRoom(prefix) {
   const a = await signup(`${prefix}-a`);
@@ -516,19 +524,19 @@ test('room.repo_set·room.repo_remove: 실행 중 요청의 요청자만(방장�
   assert.equal((await set(B, { remoteUrl: url, baseBranch: 'dev' }, 99999)).error, 'FORBIDDEN');
   assert.deepEqual(await repos(), []);
 
-  // 추가: 이름 기본값, 브랜치 3개, 별칭 branch, 방 전원에게 상태 방송
+  // 추가: 이름 기본값, 브랜치 3개, 방 전원에게 상태 방송
   const aState = A.next((m) => m.type === MSG.ROOM_STATE && m.state.repos.length === 1);
   const one = await B.ok(MSG.ROOM_REPO_SET, { requestId: id, remoteUrl: url, baseBranch: ' release/15.7.0 ', workBranch: 'feature/X' });
   await timeout(aState);
-  assert.deepEqual([one.name, one.baseBranch, one.workBranch, one.originBranch, one.branch, one.code],
-    ['insight', 'release/15.7.0', 'feature/X', 'release/15.7.0', 'release/15.7.0', null]);
+  assert.deepEqual([one.name, one.baseBranch, one.workBranch, one.originBranch, one.code],
+    ['insight', 'release/15.7.0', 'feature/X', 'release/15.7.0', null]);
   // 같은 원격을 다른 기준으로 한 번 더 추가할 수 있다, 작업 브랜치는 빈 문자열 허용
   const two = await B.ok(MSG.ROOM_REPO_SET, { requestId: id, remoteUrl: url, name: 'insight-dev', baseBranch: 'develop', workBranch: '' });
   assert.deepEqual([two.id !== one.id, two.name, two.workBranch], [true, 'insight-dev', '']);
 
   // 검사: 이름·브랜치 규칙, 다른 방 레포
   const other = await A.ok(MSG.ROOM_CREATE, { name: '다른 방' });
-  const foreign = await A.ok(MSG.REPO_ADD, { roomId: other.id, name: 'x', remoteUrl: 'u', branch: 'main' });
+  const foreign = await repoIn(A, other, { name: 'x', remoteUrl: 'u', baseBranch: 'main' });
   for (const p of [{ remoteUrl: url, baseBranch: '-x' }, { remoteUrl: url, baseBranch: ' ' }, { remoteUrl: '', baseBranch: 'b' },
     { remoteUrl: url, baseBranch: 'b', workBranch: '-y' }, { remoteUrl: url, baseBranch: 'b', name: ' ' },
     { remoteUrl: url, baseBranch: 'b', repoId: foreign.id }, { remoteUrl: url, baseBranch: 'b', repoId: 999 }]) {
@@ -630,7 +638,7 @@ test('RUN_FINISH codeStates: 조각 체인(이어 붙이기·새로 시작·어�
   assert.equal((await get(base, c.token)).status, 403);
   assert.equal((await get(`${base}/1`, c.token)).status, 403);
   const other = await A.ok(MSG.ROOM_CREATE, { name: '다른 방' });
-  const foreign = await A.ok(MSG.REPO_ADD, { roomId: other.id, name: 'x', remoteUrl: 'u', branch: 'main' });
+  const foreign = await repoIn(A, other, { name: 'x', remoteUrl: 'u', baseBranch: 'main' });
   for (const p of [`/rooms/${room.id}/code/${foreign.id}`, `/rooms/${room.id}/code/${foreign.id}/1`, `/rooms/${room.id}/code/9999`,
     `/rooms/${room.id}/code/${repo.id}/x`]) {
     const nf = await get(p, a.token);
@@ -765,7 +773,7 @@ test('RUN_FINISH codeStates: 기준 브랜치가 다르거나 다른 방 레포�
   const repo = await A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: 'u', baseBranch: 'develop' });
   const good = await A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: 'u2', baseBranch: 'main' });
   const other = await A.ok(MSG.ROOM_CREATE, { name: '다른 방' });
-  const foreign = await A.ok(MSG.REPO_ADD, { roomId: other.id, name: 'x', remoteUrl: 'u', branch: 'main' });
+  const foreign = await repoIn(A, other, { name: 'x', remoteUrl: 'u', baseBranch: 'main' });
   B.pushes.length = 0;
   await finishOk(A, id0, {
     codeStates: [await entry(A, id0, repo.id, 'release/old', bundleOf('a')), await entry(A, id0, foreign.id, 'main', bundleOf('b')),
@@ -787,7 +795,7 @@ test('RUN_FINISH promotedRepoIds: 기준 = 작업 브랜치·작업 비움·처�
   const x = await A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: 'u', baseBranch: 'release/15.7.0', workBranch: 'feature/X' });
   const noWork = await A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: 'u2', baseBranch: 'main' });
   const other = await A.ok(MSG.ROOM_CREATE, { name: '다른 방' });
-  const foreign = await A.ok(MSG.REPO_ADD, { roomId: other.id, name: 'x', remoteUrl: 'u', branch: 'main' });
+  const foreign = await repoIn(A, other, { name: 'x', remoteUrl: 'u', baseBranch: 'main' });
   await finishOk(A, id0, { codeStates: [await entry(A, id0, x.id, 'release/15.7.0', bundleOf('before'))] });
 
   const id1 = await run(A);
@@ -799,7 +807,7 @@ test('RUN_FINISH promotedRepoIds: 기준 = 작업 브랜치·작업 비움·처�
   const cleared = B.next((m) => m.type === MSG.CODE_CHANGED && m.repoId === x.id);
   await finishOk(A, id1, { promotedRepoIds: promoted, codeStates: [await entry(A, id1, x.id, 'release/15.7.0', bundleOf('stale'))] });
   let [r, s] = await repos();
-  assert.deepEqual([r.baseBranch, r.workBranch, r.originBranch, r.branch], ['feature/X', '', 'release/15.7.0', 'feature/X']);
+  assert.deepEqual([r.baseBranch, r.workBranch, r.originBranch], ['feature/X', '', 'release/15.7.0']);
   assert.deepEqual([s.baseBranch, s.workBranch], ['main', '']);
   await timeout(cleared);
   assert.deepEqual([r.code, fs.existsSync(partFileOf(room.id, x.id)), uploadsOf(room.id)], [null, false, []]);
@@ -819,7 +827,7 @@ test('RUN_FINISH promotedRepoIds: 기준 = 작업 브랜치·작업 비움·처�
   await Promise.all([A.close(), B.close()]);
 });
 
-test('기준 브랜치가 바뀌면 코드 상태·묶음 파일 삭제 + CODE_CHANGED (room.repo_set, 옛 repo.update)', async () => {
+test('기준 브랜치가 바뀌면 코드 상태·묶음 파일 삭제 + CODE_CHANGED (room.repo_set)', async () => {
   const { b, A, B, room, run, finishOk, repos, entry } = await codeRoom('cc');
   const id0 = await run(A);
   const mk = async (url) => A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: url, baseBranch: 'develop', workBranch: 'feature/X' });
@@ -840,11 +848,11 @@ test('기준 브랜치가 바뀌면 코드 상태·묶음 파일 삭제 + CODE_C
   assert.deepEqual([moved.baseBranch, moved.originBranch, moved.code], ['release/15.7.0', 'release/15.7.0', null]);
   assert.equal(exists(r1), false);
 
-  // 옛 방장 전용 repo.update 도 같다
+  // 이름만 바꾸면 그대로, 다른 레포의 기준을 바꾸면 그 레포만 지워진다
   const n2 = B.next((m) => m.type === MSG.CODE_CHANGED && m.repoId === r2.id);
-  await A.ok(MSG.REPO_UPDATE, { repoId: r2.id, name: '이름만' });
+  await B.ok(MSG.ROOM_REPO_SET, { requestId: id1, repoId: r2.id, remoteUrl: 'u2', name: '이름만', baseBranch: 'develop' });
   assert.equal(exists(r2), true);
-  await A.ok(MSG.REPO_UPDATE, { repoId: r2.id, branch: 'main' });
+  await B.ok(MSG.ROOM_REPO_SET, { requestId: id1, repoId: r2.id, remoteUrl: 'u2', baseBranch: 'main' });
   await timeout(n2);
   assert.equal(exists(r2), false);
 
@@ -853,7 +861,7 @@ test('기준 브랜치가 바뀌면 코드 상태·묶음 파일 삭제 + CODE_C
   await Promise.all([A.close(), B.close()]);
 });
 
-test('레포 빼기(room.repo_remove·옛 repo.remove)와 방 삭제는 조각 체인 전체를 지운다', async () => {
+test('레포 빼기(room.repo_remove)와 방 삭제는 조각 체인 전체를 지운다', async () => {
   const { A, B, room, run, finishOk, repos, entry } = await codeRoom('rm');
   const id0 = await run(A);
   const r1 = await A.ok(MSG.ROOM_REPO_SET, { requestId: id0, remoteUrl: 'u1', baseBranch: 'dev' });
@@ -867,7 +875,7 @@ test('레포 빼기(room.repo_remove·옛 repo.remove)와 방 삭제는 조각 �
   const id1 = await run(B);
   await B.ok(MSG.ROOM_REPO_REMOVE, { requestId: id1, repoId: r1.id });
   assert.deepEqual([exists(r1), exists(r2)], [[false, false], [true, true]]);
-  await A.ok(MSG.REPO_REMOVE, { repoId: r2.id });
+  await B.ok(MSG.ROOM_REPO_REMOVE, { requestId: id1, repoId: r2.id });
   assert.deepEqual([exists(r2), exists(r3)], [[false, false], [true, false]]);
   assert.deepEqual((await repos()).map((r) => r.id), [r3.id]);
   await finishOk(B, id1, {});

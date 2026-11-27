@@ -160,7 +160,7 @@ test('정상: 신호 → 이벤트(system 제외) → finish, 올리는 값과 �
   assert.ok(!sys.includes(repo.wt));
   // 레포 이름·기준 브랜치·사본(상대 경로)·push 명령
   assert.ok(sys.includes('- r · 기준 feature/ABC-9 / 사본 ./repos/1-r'));
-  assert.ok(sys.includes('git -C ./repos/1-r push -u origin HEAD:refs/heads/feature/ABC-9') && !sys.includes('pendingBranch'));
+  assert.ok(sys.includes('git -C ./repos/1-r push -u origin HEAD:refs/heads/feature/ABC-9'));
   assert.ok(sys.includes('A 님의 PC'));
   assert.ok(sys.includes('mcp__rooms__git_read') && !sys.includes('자동으로'));
   assert.equal(rec.argv.includes('--resume'), false);
@@ -431,7 +431,7 @@ test('고친 것은 codeStates 로 올린다(기준 브랜치, 처음이라 prev
   assert.deepEqual(fin.promotedRepoIds, []);
   assert.deepEqual(a.applied, [[1, e.snapshot]]);
   assert.equal(g(repo.local, 'rev-parse', 'refs/rooms/5/1'), e.snapshot);
-  assert.equal(a.calls.some((c) => c.payload?.event?.type === 'rooms_branch_changes'), false);
+  assert.equal(a.calls.some((c) => /^rooms_branch/.test(c.payload?.event?.type ?? '')), false);
 });
 
 test('서버에 조각이 있으면 실행 전에 사본을 그 상태로 맞추고, 실행이 올리는 것은 그 위의 증분이다', async () => {

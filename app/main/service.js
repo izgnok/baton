@@ -11,12 +11,12 @@ import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
 import { listSkills } from './skills.js';
 import { createServerClient, login, signup, getServerCommit } from './serverClient.js';
 import { claudeAuthStatus, claudeLogin, claudeUpdate } from './claudeAuth.js';
-import { cloneRepo as gitClone, inspectRepo, preflight, checkRepo, safeDirName } from './runner/preflight.js';
+import { cloneRepo as gitClone, preflight, checkRepo, safeDirName } from './runner/preflight.js';
 import { runTurn } from './runner/turn.js';
 import { roomDirOf } from './runner/sync.js';
 import { createSharedSync } from './sharedSync.js';
 import { safeJoin } from '@rooms/shared/paths.js';
-import { worktreePath, isProtectedBranch, removeWorktree, discardWorktree, listRepoFiles } from './runner/worktree.js';
+import { worktreePath, removeWorktree, discardWorktree, listRepoFiles } from './runner/worktree.js';
 import { syncRepoCode } from './runner/codeSync.js';
 import { snapshot as stateSnapshot } from './runner/codeState.js';
 import { createRoomTools } from './roomTools.js';
@@ -211,7 +211,8 @@ export function createService({ emit, relaunch }) {
     try {
       const repo = (await stateOf(roomId)).repos.find((r) => r.id === repoId);
       if (!repo || !fs.existsSync(worktreePath(roomId, repo))) return;
-      status = (await syncCopy(roomId, repoId, { background: true })).status;
+      // 알림이 방 상태보다 먼저 올 수 있어(기준 브랜치가 바뀐 때) 방 상태를 다시 받아 쓴다
+      status = (await syncCopy(roomId, repoId, { background: true, fresh: true })).status;
     } catch (e) {
       console.error('사본 맞추기 실패', e);
       status = 'failed';
@@ -248,7 +249,7 @@ export function createService({ emit, relaunch }) {
   }
 
   function roomToolsFor(roomId, requestId) {
-    return createRoomTools({
+    const tools = createRoomTools({
       roomId,
       requestId,
       client,
@@ -260,25 +261,42 @@ export function createService({ emit, relaunch }) {
       syncRepo: (repoId) => syncCopy(roomId, repoId, { fresh: true }),
       removeCopy: (repoId) => removeCopy(roomId, repoId),
     });
+    // 레포를 정하거나 뺀 도구는 성공하면 그 문구를 채팅에 한 줄 남긴다
+    return async (name, input) => {
+      const text = await tools(name, input);
+      if (name === 'room_set_repo' || name === 'room_remove_repo') {
+        client?.request(MSG.RUN_EVENT, { requestId, event: { type: 'rooms_repo_set', text } }).catch(() => {});
+      }
+      return text;
+    };
   }
 
   // ---- 자동 clone ----
   const cloneFailed = new Set(); // 실패한 `${방}:${레포}:${원격}` (앱을 다시 켜기 전까지 자동으로는 다시 안 한다. 실행 때는 다시 시도한다)
   const cloneQueued = new Set();
+  const cloning = new Set(); // 지금 받는 중인 `${방}:${레포}` (레포 카드의 받는 중 표시)
   let cloneChain = Promise.resolve(); // 한 번에 하나
 
   // 내 PC 에서 찾은 같은 원격의 레포가 있으면 그것을, 없으면 받아서 이 방 레포에 연결한다
   async function cloneSource(roomId, repo) {
     let localPath = matchRepo(config.repoIndex, repo.remoteUrl);
     if (!localPath) {
+      const key = `${roomId}:${repo.id}`;
+      cloning.add(key);
+      toRenderer('rooms:event', { type: 'local.repos', roomId });
       try {
         localPath = await gitClone({ remoteUrl: repo.remoteUrl, branch: repo.baseBranch, name: repo.name });
       } catch (e) {
         // 다른 방에서 이미 받아 둔 폴더면 그대로 쓴다
         const dest = path.join(roomsHome(), 'repos', safeDirName(repo.name));
-        if (e.message !== 'DEST_EXISTS' || !(await checkRepo({ localPath: dest, remoteUrl: repo.remoteUrl })).ok) throw e;
+        if (e.message !== 'DEST_EXISTS' || !(await checkRepo({ localPath: dest, remoteUrl: repo.remoteUrl })).ok) {
+          cloning.delete(key);
+          toRenderer('rooms:event', { type: 'local.repos', roomId });
+          throw e;
+        }
         localPath = dest;
       }
+      cloning.delete(key);
       config = { ...config, repoIndex: { scannedAt: config.repoIndex?.scannedAt ?? 0, repos: [...(config.repoIndex?.repos ?? []), { path: localPath, name: repo.name, remoteUrl: repo.remoteUrl }] } };
     }
     linkLocal(roomId, repo.id, localPath);
@@ -377,6 +395,7 @@ export function createService({ emit, relaunch }) {
     if (missing) rescan().catch((e) => console.error('레포 찾기 실패', e));
   }
 
+  // 레포 카드가 쓰는 값만: 원본 연결(localPath·block), 사본 존재, 받는 중
   async function checkRepos({ roomId }) {
     let state = roomCache.get(roomId);
     if (!state) {
@@ -384,16 +403,14 @@ export function createService({ emit, relaunch }) {
       roomCache.set(roomId, state);
     }
     const res = await preflight(state.repos, config.rooms[roomId]?.repos ?? {});
-    const indexed = new Set((config.repoIndex?.repos ?? []).map((r) => r.path));
-    res.results = await Promise.all(res.results.map(async (r) => {
-      const repo = state.repos.find((x) => x.id === r.repoId);
-      const wt = worktreePath(roomId, repo);
-      const exists = fs.existsSync(wt);
-      // 작업 브랜치(원격에 아직 없음)가 있으면 그 이름. 보호 판정은 push 할 브랜치(작업 브랜치, 없으면 기준) 기준
-      // indexed: 내 PC 레포 목록에 있는 경로(자동 연결 대상)
-      return { ...r, worktreePath: wt, worktreeExists: exists, pendingBranch: repo.workBranch || null, protected: isProtectedBranch(repo.workBranch || repo.baseBranch), indexed: !!r.localPath && indexed.has(r.localPath) };
-    }));
-    return res;
+    const results = res.results.map((r) => {
+      const wt = worktreePath(roomId, state.repos.find((x) => x.id === r.repoId));
+      return {
+        repoId: r.repoId, localPath: r.localPath, worktreePath: wt, worktreeExists: fs.existsSync(wt),
+        ...(r.block && { block: r.block }), ...(cloning.has(`${roomId}:${r.repoId}`) && { cloning: true }),
+      };
+    });
+    return { results };
   }
 
   const stateOf = async (roomId) => roomCache.get(roomId) ?? (await req(MSG.ROOM_OPEN, { roomId })).state;
@@ -423,12 +440,6 @@ export function createService({ emit, relaunch }) {
     const linked = Object.values(config.rooms).flatMap((r) => Object.values(r.repos ?? {})).map((x) => path.resolve(x));
     if (!inside(roomsHome()) && !linked.includes(target)) return false;
     try { return fs.statSync(target).isDirectory(); } catch { return false; }
-  }
-
-  async function linkRepo({ roomId, repoId, localPath }) {
-    linkLocal(roomId, repoId, localPath);
-    sendMemberStatus(roomId);
-    return checkRepos({ roomId });
   }
 
   const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
@@ -508,26 +519,7 @@ export function createService({ emit, relaunch }) {
     sendMessage: (a) => req(MSG.CHAT_SEND, a),
     retry: (a) => req(MSG.REQUEST_RETRY, a),
     cancelRequest: (a) => req(MSG.REQUEST_CANCEL, a),
-    addRepo: (a) => req(MSG.REPO_ADD, a),
-    updateRepo: (a) => req(MSG.REPO_UPDATE, a),
-    removeRepo: async (a) => {
-      // 서버에서 지워지면(방장만 가능) 그 레포의 내 작업 폴더도 정리한다
-      const hit = [...roomCache.entries()].find(([, s]) => s.repos.some((r) => r.id === a.repoId));
-      await req(MSG.REPO_REMOVE, a);
-      if (!hit) return {};
-      const [roomId, state] = hit;
-      const [kept] = await cleanWorktrees(roomId, state.repos.filter((r) => r.id === a.repoId));
-      return kept ? { keptWorktree: kept.path, reason: kept.reason } : {};
-    },
     checkRepos,
-    linkRepo,
-    cloneRepo: async ({ roomId, repoId }) => {
-      const repo = (await stateOf(roomId)).repos.find((r) => r.id === repoId);
-      if (!repo) throw new Error('NOT_FOUND');
-      await cloneSource(roomId, repo);
-      return checkRepos({ roomId });
-    },
-    inspectRepo: ({ localPath }) => inspectRepo(localPath),
     listReadDirs: ({ roomId }) => config.rooms[roomId]?.readDirs ?? [],
     addReadDir: ({ roomId, path: p }) => {
       if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('INVALID_INPUT');

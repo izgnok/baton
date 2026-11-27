@@ -68,14 +68,10 @@ test('마지막 사람이 나가도 방 행은 남는다', () => {
   assert.equal(db.prepare('SELECT owner_id FROM rooms').get().owner_id, a);
 });
 
-test('방장 아닌 사람의 방·레포 관리는 FORBIDDEN', () => {
+test('방장 아닌 사람의 방 관리는 FORBIDDEN', () => {
   const { db, ids: [a, b] } = setup();
   const room = R.createRoom(db, a, { name: '방' });
   R.joinRoom(db, b, { inviteCode: room.inviteCode });
-  const repo = R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'main' });
-  assert.throws(() => R.addRepo(db, b, room.id, { name: 'r', remoteUrl: 'u', branch: 'b' }), forbidden);
-  assert.throws(() => R.updateRepo(db, b, repo.id, { branch: 'x' }), forbidden);
-  assert.throws(() => R.removeRepo(db, b, repo.id), forbidden);
   assert.throws(() => R.renameRoom(db, b, room.id, { name: 'x' }), forbidden);
   assert.throws(() => R.regenerateInvite(db, b, room.id), forbidden);
   assert.throws(() => R.deleteRoom(db, b, room.id), forbidden);
@@ -107,26 +103,11 @@ test('deleteRoom 은 멤버·레포·메시지까지 지운다', () => {
   const { db, ids: [a, b] } = setup();
   const room = R.createRoom(db, a, { name: '방' });
   R.joinRoom(db, b, { inviteCode: room.inviteCode });
-  R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'u', branch: 'main' });
+  R.setRepo(db, room.id, { name: 'r', remoteUrl: 'u', baseBranch: 'main' });
   db.prepare("INSERT INTO messages (room_id, user_id, kind, body, created_at) VALUES (?, ?, 'chat', 'hi', 0)")
     .run(room.id, a);
   R.deleteRoom(db, a, room.id);
   for (const t of ['rooms', 'room_members', 'room_repos', 'messages']) assert.equal(count(db, t), 0, t);
-});
-
-test('updateRepo 는 넘긴 것만 바꾸고 빈 값은 INVALID_INPUT, remoteUrl 은 원문 저장', () => {
-  const { db, ids: [a] } = setup();
-  const room = R.createRoom(db, a, { name: '방' });
-  const repo = R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'main' });
-  const up = R.updateRepo(db, a, repo.id, { branch: 'develop' });
-  assert.deepEqual(up, {
-    id: repo.id, name: 'r', remoteUrl: 'git@h:a/r.git', baseBranch: 'develop', workBranch: '', originBranch: 'develop', branch: 'develop', code: null,
-  });
-  assert.throws(() => R.updateRepo(db, a, repo.id, { branch: '' }), { message: 'INVALID_INPUT' });
-  assert.equal(R.getRoomState(db, a, room.id).repos[0].branch, 'develop');
-  R.removeRepo(db, a, repo.id);
-  assert.deepEqual(R.getRoomState(db, a, room.id).repos, []);
-  assert.throws(() => R.removeRepo(db, a, repo.id), { message: 'NOT_FOUND' });
 });
 
 test('옛 스키마 DB 를 열면 default_model·default_effort 칸이 생기고 데이터는 남는다', async () => {
@@ -219,7 +200,7 @@ test('fork: 멤버만, 레포·멤버·기본값 복사, 방장=요청자, 안�
   const room = R.createRoom(db, a, { name: '원래' });
   R.joinRoom(db, b, { inviteCode: room.inviteCode });
   R.setRoomSettings(db, a, room.id, { defaultModel: 'opus', defaultEffort: 'high', isPublic: false });
-  R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'dev' });
+  R.setRepo(db, room.id, { name: 'r', remoteUrl: 'git@h:a/r.git', baseBranch: 'dev' });
   db.prepare("UPDATE rooms SET claude_session_id = 'S1', transcript_version = 4 WHERE id = ?").run(room.id);
   db.prepare("INSERT INTO messages (room_id, user_id, kind, body, created_at) VALUES (?, ?, 'chat', '옛 채팅', 1)").run(room.id, a);
 
@@ -236,7 +217,7 @@ test('fork: 멤버만, 레포·멤버·기본값 복사, 방장=요청자, 안�
   assert.equal(db.prepare('SELECT fork_pending FROM rooms WHERE id = ?').get(f.id).fork_pending, 1);
   const st = R.getRoomState(db, a, f.id);
   assert.deepEqual(st.members.map((m) => [m.userId, m.isOwner]).sort(), [[a, false], [b, true]]);
-  assert.deepEqual(st.repos.map((r) => [r.name, r.remoteUrl, r.branch]), [['r', 'git@h:a/r.git', 'dev']]);
+  assert.deepEqual(st.repos.map((r) => [r.name, r.remoteUrl, r.baseBranch]), [['r', 'git@h:a/r.git', 'dev']]);
   assert.notEqual(st.repos[0].id, R.getRoomState(db, a, room.id).repos[0].id);
   const msgs = db.prepare('SELECT user_id, kind, body FROM messages WHERE room_id = ?').all(f.id);
   assert.deepEqual(msgs.map((m) => ({ ...m })), [{ user_id: null, kind: 'notice', body: '원래 방에서 갈라졌어요' }]);
@@ -277,7 +258,7 @@ test('옛 스키마 DB(room_repos.branch)를 열면 base_branch 로 옮겨지고
       const [repo] = R.getRoomState(db, 1, 1).repos;
       assert.deepEqual(repo, {
         id: 1, name: 'insight', remoteUrl: 'git@h:a/insight.git', baseBranch: 'release/15.6.0', workBranch: '',
-        originBranch: 'release/15.6.0', branch: 'release/15.6.0', code: null,
+        originBranch: 'release/15.6.0', code: null,
       });
     };
     const db = openDb(file);
@@ -299,8 +280,8 @@ test('setRepo: 추가(이름 기본값·같은 원격 두 번)·수정(안 준 �
   const other = R.createRoom(db, a, { name: '다른 방' });
   const bad = { message: 'INVALID_INPUT' };
   const one = R.setRepo(db, room.id, { remoteUrl: ' git@h:a/insight.git ', baseBranch: ' release/15.7.0 ', workBranch: 'feature/X' }).repo;
-  assert.deepEqual([one.name, one.remoteUrl, one.baseBranch, one.workBranch, one.originBranch, one.branch, one.code],
-    ['insight', 'git@h:a/insight.git', 'release/15.7.0', 'feature/X', 'release/15.7.0', 'release/15.7.0', null]);
+  assert.deepEqual([one.name, one.remoteUrl, one.baseBranch, one.workBranch, one.originBranch, one.code],
+    ['insight', 'git@h:a/insight.git', 'release/15.7.0', 'feature/X', 'release/15.7.0', null]);
   assert.equal(R.setRepo(db, room.id, { remoteUrl: 'https://h/a/mod.git/', baseBranch: 'dev', name: ' 이름 ' }).repo.name, '이름');
   assert.equal(R.setRepo(db, room.id, { remoteUrl: 'https://h/a/mod/', baseBranch: 'dev' }).repo.name, 'mod');
   assert.equal(R.setRepo(db, room.id, { remoteUrl: 'git@h:a/insight.git', baseBranch: 'develop', workBranch: '' }).repo.workBranch, '');
@@ -337,17 +318,17 @@ test('setRepo: 추가(이름 기본값·같은 원격 두 번)·수정(안 준 �
   assert.throws(() => R.removeRoomRepo(db, room.id, foreign.id), bad);
 });
 
-test('updateRepo: 기준이 바뀐 레포는 코드 상태를 비우고, 같으면 그대로', () => {
+test('setRepo: 기준이 바뀐 레포는 코드 상태를 비우고, 같으면 그대로', () => {
   const { db, ids: [a] } = setup(1);
   const room = R.createRoom(db, a, { name: '방' });
-  const r1 = R.addRepo(db, a, room.id, { name: 'r1', remoteUrl: 'u1', branch: 'main' });
-  const r2 = R.addRepo(db, a, room.id, { name: 'r2', remoteUrl: 'u2', branch: 'main' });
+  const { repo: r1 } = R.setRepo(db, room.id, { name: 'r1', remoteUrl: 'u1', baseBranch: 'main' });
+  const { repo: r2 } = R.setRepo(db, room.id, { name: 'r2', remoteUrl: 'u2', baseBranch: 'main' });
   for (const id of [r1.id, r2.id]) {
     db.prepare("INSERT INTO code_states VALUES (?, ?, ?, 1, NULL, 1)").run(id, '1'.repeat(40), '2'.repeat(40));
   }
-  R.updateRepo(db, a, r1.id, { name: '새 이름' });
+  R.setRepo(db, room.id, { repoId: r1.id, name: '새 이름', remoteUrl: 'u1', baseBranch: 'main' });
   assert.notEqual(R.getRoomState(db, a, room.id).repos[0].code, null);
-  R.updateRepo(db, a, r1.id, { branch: 'dev' });
+  R.setRepo(db, room.id, { repoId: r1.id, remoteUrl: 'u1', baseBranch: 'dev' });
   assert.equal(R.getRoomState(db, a, room.id).repos[0].code, null);
   assert.equal(R.getRoomState(db, a, room.id).repos[0].originBranch, 'dev');
 });

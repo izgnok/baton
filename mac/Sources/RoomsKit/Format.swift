@@ -77,7 +77,7 @@ public enum Format {
         "PREFLIGHT:MISSING": "레포 폴더가 연결되지 않았어요",
         "PREFLIGHT:REMOTE_MISMATCH": "레포 주소가 방 설정과 달라요",
         "PREFLIGHT:BRANCH_MISMATCH": "레포 브랜치가 방 설정과 달라요",
-        "BRANCH_NOT_ON_REMOTE": "방 브랜치가 원격에 없어요",
+        "BRANCH_NOT_ON_REMOTE": "기준 브랜치가 원격에 없어요",
         "SYNC_CONFLICT": "방 작업 폴더를 최신으로 맞추다 충돌이 났어요",
         "FETCH_FAILED": "원격에서 받아오지 못했어요",
         "BAD_BRANCH": "브랜치 이름이 올바르지 않아요",
@@ -85,6 +85,9 @@ public enum Format {
         "TRANSCRIPT_MISSING": "대화 기록을 불러오지 못했어요",
         "TRANSCRIPT_NOT_FOUND": "대화 기록을 불러오지 못했어요",
         "BAD_SESSION_ID": "대화 기록을 불러오지 못했어요",
+        "CODE_CONFLICT": "공유 사본을 맞추다 충돌이 났어요",
+        "CODE_SYNC_FAILED": "공유 사본을 맞추지 못했어요",
+        "CLONE_FAILED": "레포를 받아 오지 못했어요",
     ]
 
     /// failed·held 요청의 error 코드 → 사유 문구

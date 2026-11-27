@@ -6,6 +6,8 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../../server/src/index.js';
+import { MSG } from '@rooms/shared/protocol.js';
+import { createServerClient, signup as httpSignup } from '../main/serverClient.js';
 
 // 서버 1대 + 맥 여러 대(코어 프로세스, 각자 ROOMS_HOME·가짜 claude)로 공유 사본 흐름을 끝까지 돌려 본다
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,6 +20,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-e2e-'));
 const procs = [];
 let server;
 after(async () => {
+  bots.forEach((c) => c.close());
   await Promise.all(procs.map((p) => new Promise((resolve) => { if (p.exitCode !== null) return resolve(); p.once('exit', resolve); p.kill(); })));
   await server?.close();
   fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5 });
@@ -33,9 +36,32 @@ async function until(fn, what, ms = 30000) {
   }
 }
 
-// 코어를 띄우고 call(핸들러 호출)·events(화면으로 가는 알림)를 돌려준다
-function mac(label, seqFiles, extraEnv = {}) {
+// 레포는 방 도구(room.repo_set)로만 만들어진다. 방 멤버인 스크립트 클라이언트가 @claude 요청을 받아 같은 메시지를 보낸다
+const bots = new Map();
+async function setRoomRepo(serverUrl, { id: roomId, inviteCode }, payload) {
+  if (!bots.has(serverUrl)) {
+    const { token } = await httpSignup(serverUrl, { email: 'bot@x.com', password: 'password1', name: 'bot' });
+    const client = createServerClient({ serverUrl, token });
+    client.joined = new Set();
+    bots.set(serverUrl, client);
+  }
+  const bot = bots.get(serverUrl);
+  await until(() => bot.connected, '봇 연결');
+  if (!bot.joined.has(roomId)) { await bot.request(MSG.ROOM_JOIN, { inviteCode }); bot.joined.add(roomId); }
+  const started = new Promise((resolve) => { const off = bot.on(MSG.RUN_START, (m) => { off(); resolve(m.runStart); }); });
+  await bot.request(MSG.CHAT_SEND, { roomId, text: '@claude 레포' });
+  const { requestId } = await started;
+  const repo = await bot.request(MSG.ROOM_REPO_SET, { requestId, ...payload });
+  await bot.request(MSG.RUN_FAIL, { requestId, reason: 'TEST' }); // 방의 다음 요청이 막히지 않게 끝낸다
+  return repo;
+}
+
+// 코어를 띄우고 call(핸들러 호출)·events(화면으로 가는 알림)를 돌려준다.
+// localRepos: 이 맥에서 찾은 레포 목록(원본 자동 연결 대상) — 미리 설정 파일에 넣어 둔다
+function mac(label, seqFiles, extraEnv = {}, localRepos = []) {
   const home = path.join(tmp, `${label}-home`);
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ serverUrl: null, token: null, rooms: {}, repoIndex: { scannedAt: Date.now(), repos: localRepos } }));
   const child = spawn(process.execPath, ['main/core.js'], {
     cwd: appDir,
     env: {
@@ -84,25 +110,33 @@ test('두 맥: A 의 실행이 올린 변경이 B 사본에 알림으로 맞춰�
   server = await startServer({ port: 0, dataDir: path.join(tmp, 'data'), commit: null });
   const serverUrl = `http://localhost:${server.port}`;
 
-  const A = mac('A', ['a0.txt']);
-  const B = mac('B', ['b0.txt', 'b1.txt']);
+  // A·B 는 이 레포의 원본을 이미 가지고 있고(자동 연결 대상), C 는 없다
+  const cloneOf = (label) => {
+    const dir = path.join(tmp, `${label}-clone`);
+    g(tmp, 'clone', '-q', bare, dir);
+    return [{ path: dir, name: 'r', remoteUrl: bare }];
+  };
+  const A = mac('A', ['a0.txt'], {}, cloneOf('A'));
+  const B = mac('B', ['b0.txt', 'b1.txt'], {}, cloneOf('B'));
   const C = mac('C', ['c0.txt']);
   for (const [m, name] of [[A, 'a'], [B, 'b'], [C, 'c']]) await m.call('signup', { serverUrl, email: `${name}@x.com`, password: 'password1', name });
   const room = await A.call('createRoom', { name: '공유 사본' });
   await B.call('joinRoom', { inviteCode: room.inviteCode });
   await C.call('joinRoom', { inviteCode: room.inviteCode });
   const roomId = room.id;
-  const repo = await A.call('addRepo', { roomId, name: 'r', remoteUrl: bare, branch: 'main' });
+  const repo = await setRoomRepo(serverUrl, room, { name: 'r', remoteUrl: bare, baseBranch: 'main' });
   for (const m of [A, B]) {
     const clone = path.join(tmp, `${m.label}-clone`);
-    g(tmp, 'clone', '-q', bare, clone);
-    await m.call('openRoom', { roomId });
-    await m.call('linkRepo', { roomId, repoId: repo.id, localPath: clone });
+    await m.call('openRoom', { roomId }); // 같은 원격의 원본을 찾아 자동으로 잇는다
+    assert.equal(m.config().rooms[roomId].repos[repo.id], clone);
     m.src = clone;
     m.wt = path.join(m.home, String(roomId), 'repos', `${repo.id}-r`);
   }
   C.wt = path.join(C.home, String(roomId), 'repos', `${repo.id}-r`);
   await C.call('openRoom', { roomId }); // C 는 레포를 연결하지 않는다
+  // 레포 카드가 쓰는 값만 온다
+  assert.deepEqual((await A.call('checkRepos', { roomId })).results, [{ repoId: repo.id, localPath: A.src, worktreePath: A.wt, worktreeExists: false }]);
+  assert.deepEqual((await C.call('checkRepos', { roomId })).results, [{ repoId: repo.id, localPath: null, worktreePath: C.wt, worktreeExists: false, block: 'MISSING' }]);
 
   const chat = (m, text) => m.call('sendMessage', { roomId, text });
   const parts = async () => (await (await fetch(`${serverUrl}/rooms/${roomId}/code/${repo.id}`, { headers: { authorization: `Bearer ${A.token()}` } })).json()).parts;
@@ -150,7 +184,7 @@ test('두 맥: A 의 실행이 올린 변경이 B 사본에 알림으로 맞춰�
   assert.equal(await (async () => (await parts()).length)(), 4);
 });
 
-test('다른 사람이 기준을 바꿔 사본이 비워지면: 실행 중인 맥은 끝난 뒤에 새 기준으로 맞춘다', { timeout: 120000 }, async () => {
+test('다른 사람이 기준을 바꿔 사본이 비워지면: 알림으로 새 기준에 맞춘다', { timeout: 120000 }, async () => {
   const bare = path.join(tmp, 'r2.git');
   const seed = path.join(tmp, 'seed2');
   fs.mkdirSync(seed);
@@ -169,38 +203,29 @@ test('다른 사람이 기준을 바꿔 사본이 비워지면: 실행 중인 �
   const devTip = g(bare, 'rev-parse', 'dev');
   const serverUrl = `http://localhost:${server.port}`;
 
-  const record = path.join(tmp, 'D-record');
+  const clone = path.join(tmp, 'D2-clone');
+  g(tmp, 'clone', '-q', bare, clone);
   const A = mac('A2', []);
-  const D = mac('D2', ['d0.txt', 'd1.txt'], { FAKE_SLEEP_MS: '3000', FAKE_RECORD: record });
+  const D = mac('D2', ['d0.txt', 'd1.txt'], {}, [{ path: clone, name: 'r', remoteUrl: bare }]);
   await A.call('signup', { serverUrl, email: 'a2@x.com', password: 'password1', name: 'a2' });
   await D.call('signup', { serverUrl, email: 'd2@x.com', password: 'password1', name: 'd2' });
   const room = await A.call('createRoom', { name: '기준 변경' });
   await D.call('joinRoom', { inviteCode: room.inviteCode });
   const roomId = room.id;
-  const repo = await A.call('addRepo', { roomId, name: 'r', remoteUrl: bare, branch: 'main' });
-  const clone = path.join(tmp, 'D2-clone');
-  g(tmp, 'clone', '-q', bare, clone);
+  const repo = await setRoomRepo(serverUrl, room, { name: 'r', remoteUrl: bare, baseBranch: 'main' });
   await D.call('openRoom', { roomId });
-  await D.call('linkRepo', { roomId, repoId: repo.id, localPath: clone });
   const wt = path.join(D.home, String(roomId), 'repos', `${repo.id}-r`);
   const parts = async () => (await (await fetch(`${serverUrl}/rooms/${roomId}/code/${repo.id}`, { headers: { authorization: `Bearer ${A.token()}` } })).json()).parts;
 
   await D.call('sendMessage', { roomId, text: '@claude 첫 실행' });
   await until(async () => (await parts()).length === 1, '첫 조각');
   assert.equal(fs.readFileSync(path.join(wt, 'd0.txt'), 'utf8'), '고친 코드 0');
-  fs.rmSync(record, { force: true });
 
-  // 두 번째 실행이 도는 동안 방장이 기준 브랜치를 바꾼다(서버가 코드 상태를 비우고 CODE_CHANGED 를 알린다)
-  await D.call('sendMessage', { roomId, text: '@claude 두 번째 실행' });
-  await until(() => fs.existsSync(record), 'D 의 claude 시작');
-  await A.call('updateRepo', { repoId: repo.id, branch: 'dev' });
+  // 다른 멤버가 방 도구로 기준 브랜치를 바꾼다(서버가 코드 상태를 비우고 CODE_CHANGED 를 알린다)
+  assert.deepEqual(D.localCode(), []); // 내가 올린 변경 알림은 맞추지 않는다
+  await setRoomRepo(serverUrl, room, { repoId: repo.id, remoteUrl: bare, baseBranch: 'dev' });
   await until(async () => (await parts()).length === 0, '서버가 코드 상태를 비움');
-  await sleep(800);
-  assert.deepEqual(D.localCode(), []); // 실행 중이라 아직 맞추지 않았다
-  assert.notEqual(g(wt, 'rev-parse', 'HEAD'), devTip);
-
-  // 실행이 끝나면 새 기준(dev)으로 맞춘다
-  const ev = await until(() => D.localCode()[0], '끝난 뒤 맞춤 알림');
+  const ev = await until(() => D.localCode()[0], '맞춤 알림');
   assert.deepEqual([ev.roomId, ev.repoId, ev.status], [roomId, repo.id, 'ok']);
   assert.equal(g(wt, 'rev-parse', 'HEAD'), devTip);
   assert.equal(g(wt, 'status', '--porcelain'), '');
