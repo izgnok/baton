@@ -1,5 +1,5 @@
 import { h, button } from '../dom.js';
-import { errorText, failText, STATUS_TEXT, formatTime, formatDate, renderMarkdown, personIndex, initial, memberSummary, modelLabel, effortLabel, MODELS } from '../format.js';
+import { errorText, failText, STATUS_TEXT, formatTime, renderMarkdown, personIndex, initial, memberSummary, modelLabel, effortLabel, MODELS } from '../format.js';
 import { openSheet, inputSheet, confirmSheet } from './sheet.js';
 import { attachAutocomplete } from './autocomplete.js';
 import { codeCard } from './codeChanges.js';
@@ -57,8 +57,6 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   let memberStatus = {}; // userId → {repos, readDirs, claude}
   let myModel = { model: '', effort: '' }; // 이 PC 에 저장된 내 선택(빈 값 = 방 기본)
   let readDirs = [];
-  let indexedAt = null;
-  let rescanning = false;
   let skillsP = null;
   let mode = loadMode();
   const openTools = new Set();
@@ -311,7 +309,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   // 레포
   const BLOCK_TEXT = { MISSING: '내 폴더를 연결해 주세요', REMOTE_MISMATCH: '고른 폴더의 원격 주소가 달라요' };
 
-  const setCheck = (res) => { repoCheck = res.results; indexedAt = res.indexedAt ?? null; };
+  const setCheck = (res) => { repoCheck = res.results; };
 
   async function refreshRepos() {
     repoLoading = true;
@@ -330,13 +328,6 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     if (!destroyed && curTab === 'repos') renderPanel();
   }
 
-  async function rescan() {
-    rescanning = true;
-    renderPanel();
-    try { await window.rooms.rescanRepos(); } catch (e) { fail(e); }
-    rescanning = false;
-    if (!destroyed) await refreshRepos();
-  }
 
   async function addDir() {
     const p = await window.rooms.pickFolder().catch(() => null);
@@ -374,7 +365,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     const lines = [];
     if (!res) lines.push(h('div', { class: 'sub' }, repoLoading ? '확인하는 중…' : '상태를 확인하지 못했어요'));
     else {
-      lines.push(h('div', { class: 'path' }, `내 원본 · ${res.localPath ?? '연결 안 됨'}`));
+      lines.push(h('div', { class: 'path' }, `내 원본 · ${res.localPath ?? '내 PC 에서 찾지 못했어요. clone 하거나 폴더를 골라 주세요'}`));
       if (res.worktreeExists) lines.push(h('div', { class: 'path' }, `방 작업 폴더 · ${res.worktreePath}`));
       if (res.indexed) lines.push(h('div', { class: 'chip-ok' }, '자동 연결됨'));
       lines.push(res.block ? h('div', { class: 'status-bad' }, BLOCK_TEXT[res.block]) : h('div', { class: 'status-ok' }, '정상'));
@@ -410,10 +401,6 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   function reposPanel() {
-    const found = indexedAt ? `마지막 찾은 시각 ${formatDate(indexedAt)} ${formatTime(indexedAt)}` : '아직 찾지 않았어요';
-    const rescanBtn = small(rescanning ? '찾는 중…' : '내 레포 다시 찾기', rescan);
-    rescanBtn.disabled = rescanning;
-    panelBody.append(h('div', { class: 'mini-card' }, h('div', { class: 'name' }, '내 컴퓨터의 레포'), h('div', { class: 'sub' }, rescanning ? '홈 폴더 아래를 찾는 중이에요' : found), rescanBtn));
     if (!state.repos.length) panelBody.append(h('div', { class: 'sub' }, '등록된 레포가 없어요'));
     panelBody.append(...state.repos.map(repoCard));
     // 레포가 없는 방에서도 보인다
@@ -458,6 +445,10 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   function sharedPanel() {
+    panelBody.append(h('div', { class: 'mini-card' },
+      h('div', { class: 'name' }, '내 PC 의 공유 폴더'),
+      h('div', { class: 'sub' }, '서버 파일의 사본이에요. 여기서 고친 내용은 올라가지 않으니, 바꾸려면 Claude 에게 요청해 주세요'),
+      h('div', { class: 'row' }, small('폴더 열기', () => window.rooms.openShared({ roomId }).catch(fail)))));
     if (!shared) return void panelBody.append(h('div', { class: 'sub' }, '불러오는 중…'));
     if (!shared.length) return void panelBody.append(h('div', { class: 'sub' }, '아직 공유된 파일이 없어요'));
     let dir = null;
@@ -481,7 +472,15 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
       if (isHtml) body = h('iframe', { class: 'preview-frame', sandbox: '', srcdoc: file.text }); // 스크립트·same-origin 모두 금지
       else if (lower.endsWith('.md')) body = markdownEl(file.text + note);
       else body = h('pre', { class: 'preview-text' }, file.text + note);
-      openSheet({ title: p.split('/').pop(), subtitle: p, body, wide: true, actions: [{ label: '닫기', kind: 'secondary' }] });
+      const open = (reveal) => window.rooms.openShared({ roomId, path: p, reveal }).then(() => false, (e) => { fail(e); return false; });
+      openSheet({
+        title: p.split('/').pop(), subtitle: p, body, wide: true,
+        actions: [
+          { label: 'Finder 에서 보기', kind: 'secondary', onClick: () => open(true) },
+          { label: isHtml ? '브라우저로 열기' : '기본 앱으로 열기', kind: 'secondary', onClick: () => open(false) },
+          { label: '닫기', kind: 'primary' },
+        ],
+      });
     } catch (e) {
       fail(e);
     }

@@ -15,6 +15,8 @@ import { createServerClient, login, signup, getServerCommit } from './serverClie
 import { claudeAuthStatus, claudeLogin } from './claudeAuth.js';
 import { cloneRepo as gitClone, inspectRepo, preflight } from './runner/preflight.js';
 import { runTurn } from './runner/turn.js';
+import { pullRoom, roomDirOf } from './runner/sync.js';
+import { safeJoin } from '@rooms/shared/paths.js';
 import { worktreePath, isProtectedBranch, removeWorktree, listRepoFiles } from './runner/worktree.js';
 import { startCapture } from './capture.js';
 
@@ -27,6 +29,7 @@ let updater = null;
 const roomCache = new Map(); // roomId → 방 상태
 const pending = new Map(); // 승인 id → {resolve, requestId}
 const runs = new Map(); // requestId → AbortController
+const runningRooms = new Map(); // roomId → 이 PC 에서 실행 중인 요청 수
 
 const toRenderer = (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -59,6 +62,7 @@ async function handleRunStart(runStart) {
   const { requestId, roomId } = runStart;
   const ac = new AbortController(); // 방을 여는 동안 중단 신호가 와도 놓치지 않게 먼저 만든다
   runs.set(requestId, ac);
+  runningRooms.set(roomId, (runningRooms.get(roomId) ?? 0) + 1);
   try {
     let state = roomCache.get(roomId);
     if (!state) {
@@ -91,6 +95,8 @@ async function handleRunStart(runStart) {
     });
   } finally {
     runs.delete(requestId);
+    const n = (runningRooms.get(roomId) ?? 1) - 1;
+    if (n > 0) runningRooms.set(roomId, n); else runningRooms.delete(roomId);
   }
 }
 
@@ -113,6 +119,7 @@ function connectClient() {
       const linked = autoLink(roomId, m.state);
       if (linked) toRenderer('rooms:event', { type: 'local.repos', roomId });
       if (linked || renamed) sendMemberStatus(roomId);
+      rescanIfMissing();
     } else if (m.type === MSG.ROOM_DELETE) roomCache.delete(m.roomId);
     if (m.type === MSG.RUN_START) return void handleRunStart(m.runStart);
     if (m.type === MSG.RUN_CANCEL) return void runs.get(Number(m.requestId))?.abort();
@@ -158,15 +165,34 @@ async function sendMemberStatus(roomId) {
   client.request(MSG.MEMBER_STATUS, { roomId, status }).catch(() => {});
 }
 
-async function rescan() {
-  const repos = await scanRepos({});
-  config = { ...config, repoIndex: { scannedAt: Date.now(), repos } };
-  saveConfig(config);
-  for (const [roomId, state] of roomCache) {
-    if (autoLink(roomId, state)) toRenderer('rooms:event', { type: 'local.repos', roomId });
-    sendMemberStatus(roomId);
-  }
-  return config.repoIndex;
+let scanning = null;
+function rescan() {
+  scanning ??= (async () => {
+    const repos = await scanRepos({});
+    config = { ...config, repoIndex: { scannedAt: Date.now(), repos } };
+    saveConfig(config);
+    for (const [roomId, state] of roomCache) {
+      if (autoLink(roomId, state)) toRenderer('rooms:event', { type: 'local.repos', roomId });
+      sendMemberStatus(roomId);
+    }
+    return config.repoIndex;
+  })().finally(() => { scanning = null; });
+  return scanning;
+}
+
+// 방 공유 파일을 내 PC 폴더(~/.claude-rooms/<방>/shared)에 받아 둔다.
+// 이 PC 에서 그 방의 Claude 가 실행 중이면 작업 중인 파일을 덮어쓰지 않게 건너뛴다
+async function syncShared(roomId) {
+  if (!client || runningRooms.has(roomId)) return;
+  await pullRoom({ http: client.http, roomId, roomDir: roomDirOf(roomId) });
+}
+const sharedDirOf = (roomId) => path.join(roomDirOf(Number(roomId)), 'shared');
+
+// 연결 안 된 방 레포가 있으면 홈 아래를 다시 찾는다(앱을 켠 뒤 clone 하거나 옮긴 레포). 1분에 한 번까지
+function rescanIfMissing() {
+  if (process.env.ROOMS_SCREENSHOT || scanning || Date.now() - (config.repoIndex?.scannedAt ?? 0) < 60000) return;
+  const missing = [...roomCache].some(([roomId, st]) => st.repos.some((r) => !config.rooms[roomId]?.repos?.[r.id]));
+  if (missing) rescan().catch((e) => console.error('레포 찾기 실패', e));
 }
 
 async function checkRepos({ roomId }) {
@@ -183,7 +209,6 @@ async function checkRepos({ roomId }) {
     // indexed: 내 PC 레포 목록에 있는 경로(자동 연결 대상)
     return { ...r, worktreePath: wt, worktreeExists: fs.existsSync(wt), protected: isProtectedBranch(repo.branch), indexed: !!r.localPath && indexed.has(r.localPath) };
   });
-  res.indexedAt = config.repoIndex?.scannedAt ?? null;
   return res;
 }
 
@@ -269,6 +294,8 @@ const handlers = {
     roomCache.set(a.roomId, data.state);
     autoLink(a.roomId, data.state);
     sendMemberStatus(a.roomId);
+    rescanIfMissing();
+    syncShared(a.roomId).catch((e) => console.error('공유 파일 받기 실패', e));
     const mine = config.rooms[a.roomId] ?? {};
     return { ...data, myModel: { model: mine.model ?? '', effort: mine.effort ?? '' } };
   },
@@ -311,7 +338,6 @@ const handlers = {
     return linkRepo({ roomId, repoId, localPath });
   },
   inspectRepo: ({ localPath }) => inspectRepo(localPath),
-  rescanRepos: () => rescan(),
   listReadDirs: ({ roomId }) => config.rooms[roomId]?.readDirs ?? [],
   addReadDir: ({ roomId, path: p }) => {
     if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('INVALID_INPUT');
@@ -337,9 +363,22 @@ const handlers = {
     const r = await dialog.showOpenDialog(win ?? undefined, { properties: ['openDirectory'] });
     return r.canceled ? null : r.filePaths[0];
   },
-  listShared: ({ roomId }) => {
+  listShared: async ({ roomId }) => {
     if (!client) throw new Error('NOT_LOGGED_IN');
+    await syncShared(roomId).catch((e) => console.error('공유 파일 받기 실패', e));
     return client.http.getManifest(roomId);
+  },
+  // 공유 파일을 기본 앱으로 열거나(reveal 이면) Finder 에서 보여 준다. path 가 없으면 공유 폴더를 연다
+  openShared: async ({ roomId, path: p, reveal = false }) => {
+    const dir = sharedDirOf(roomId);
+    let target = dir;
+    if (p != null) {
+      try { target = safeJoin(dir, p); } catch { throw new Error('FORBIDDEN'); }
+      if (!fs.existsSync(target)) await syncShared(Number(roomId)).catch(() => {});
+    } else fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(target)) throw new Error('NOT_FOUND');
+    if (reveal) return void shell.showItemInFolder(target);
+    if (await shell.openPath(target)) throw new Error('NOT_FOUND');
   },
   readShared: async ({ roomId, path: p }) => {
     if (!client) throw new Error('NOT_LOGGED_IN');
@@ -428,6 +467,7 @@ function createWindow() {
       preload: path.join(here, 'preload.cjs'),
     },
   });
+  win.on('focus', rescanIfMissing); // 터미널에서 clone 하고 돌아왔을 때
   // 링크는 앱 안에서 열지 않는다. http(s) 만 기본 브라우저로 보낸다
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);

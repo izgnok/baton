@@ -75,6 +75,7 @@ function showUpdate(u) {
   updateBar.replaceChildren(h('span', {}, `새 버전이 있어요 (커밋 ${u.count}개)`), more, apply);
 }
 window.rooms.onUpdate(showUpdate);
+ctx.showUpdate = showUpdate;
 
 let wasDown = false;
 window.rooms.onStatus(async (s) => {

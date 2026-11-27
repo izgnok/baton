@@ -11,8 +11,8 @@ const calls = [
   'listRooms', 'createRoom', 'joinRoom', 'leaveRoom', 'openRoom', 'renameRoom', 'regenerateInvite', 'deleteRoom',
   'sendMessage', 'retry', 'addRepo', 'updateRepo', 'removeRepo',
   'checkRepos', 'linkRepo', 'cloneRepo', 'inspectRepo', 'pickFolder', 'openFolder', 'listShared', 'readShared', 'answerApproval',
-  'cancelRequest', 'rescanRepos', 'listReadDirs', 'addReadDir', 'removeReadDir', 'listSkills', 'listRepoFiles',
-  'setRoomModel', 'setRoomSettings', 'getUsage', 'checkUpdate', 'applyUpdate',
+  'cancelRequest', 'listReadDirs', 'addReadDir', 'removeReadDir', 'listSkills', 'listRepoFiles',
+  'setRoomModel', 'setRoomSettings', 'getUsage', 'checkUpdate', 'applyUpdate', 'openShared',
 ];
 
 const subscribe = (channel) => (fn) => {

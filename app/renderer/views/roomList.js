@@ -95,8 +95,23 @@ export function roomListView(root, ctx) {
     ctx.go('login', { serverUrl: (await window.rooms.getConfig()).serverUrl });
   }
 
+  const checkBtn = h('button', { type: 'button', class: 'btn-text' }, '업데이트 확인');
+  checkBtn.addEventListener('click', async () => {
+    checkBtn.disabled = true;
+    checkBtn.textContent = '확인 중…';
+    try {
+      const u = await window.rooms.checkUpdate();
+      ctx.showUpdate?.(u);
+      if (!(u?.count > 0)) ctx.toast('최신 버전이에요');
+    } catch (e) {
+      ctx.toast(errorText(e.message));
+    }
+    checkBtn.disabled = false;
+    checkBtn.textContent = '업데이트 확인';
+  });
+
   root.append(h('div', { class: 'screen' },
-    h('div', { class: 'topbar' }, h('button', { type: 'button', class: 'btn-text', onclick: logout }, '로그아웃')),
+    h('div', { class: 'topbar' }, checkBtn, h('button', { type: 'button', class: 'btn-text', onclick: logout }, '로그아웃')),
     h('div', { class: 'screen-scroll' },
       h('div', { class: 'col' },
         h('div', { class: 'rooms-head' }, h('h1', { class: 'title' }, '채팅방')),

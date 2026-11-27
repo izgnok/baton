@@ -141,3 +141,12 @@ test('자식이 한 번 죽으면 다시 뜬다', async () => {
     await sup.stop();
   }
 });
+
+test('켜자마자 멈추면 자식을 새로 띄우지 않는다', async () => {
+  const before = starts();
+  const sup = startSupervisor({ script: FAKE, root: tmp, intervalMs: 3600000, log: quiet });
+  await sup.stop();
+  await sleep(300);
+  assert.equal(starts(), before);
+  assert.equal(sup.pid(), undefined);
+});

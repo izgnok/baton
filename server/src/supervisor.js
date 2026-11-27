@@ -24,9 +24,11 @@ export function startSupervisor({
   let checking = false;
   let crashes = [];
   let crashTimer = null;
+  let closed = false; // stop() 이후: 새 자식을 띄우지 않는다
 
   async function spawnChild() {
     childHead = await src.sourceHead(root);
+    if (closed) return; // HEAD 를 읽는 사이에 stop() 됐으면 띄우지 않는다
     const c = nodeFork(script, [], { env: process.env });
     child = c;
     log.log(`서버 시작 (pid ${c.pid}${childHead ? `, ${childHead.slice(0, 7)}` : ''})`);
@@ -117,6 +119,7 @@ export function startSupervisor({
     pid: () => child?.pid,
     halted: () => halted,
     async stop() {
+      closed = true;
       stopping = true;
       clearInterval(timer);
       clearTimeout(crashTimer);
