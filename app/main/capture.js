@@ -140,7 +140,7 @@ export async function startCapture(outDir) {
     await b.request(MSG.MEMBER_STATUS, { roomId, status: { repos: ['payment-api'], readDirs: ['notes'], claude: true } });
     await c.request(MSG.MEMBER_STATUS, { roomId, status: { repos: [], readDirs: [], claude: false } });
     // 방 기본 모델·노력(방장 = A)
-    await handlers.setRoomSettings({ roomId, defaultModel: 'opus', defaultEffort: 'high' });
+    await handlers.setRoomSettings({ roomId, defaultModel: 'claude-opus-5-5', defaultEffort: 'high' });
     const notes = path.join(tmp, 'notes');
     fs.mkdirSync(notes);
 
@@ -174,7 +174,7 @@ export async function startCapture(outDir) {
       b.request(MSG.CHAT_SEND, { roomId, text }).catch(reject);
     });
     const event = (requestId, ev) => b.request(MSG.RUN_EVENT, { requestId, event: ev });
-    const text = (t) => ({ type: 'assistant', message: { model: 'claude-opus-4-7', content: [{ type: 'text', text: t }] } });
+    const text = (t) => ({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: t }] } });
     const tool = (id, name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
 
     await b.request(MSG.CHAT_SEND, { roomId, text: '결제 실패 원인부터 볼까요?' });

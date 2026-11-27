@@ -1,12 +1,11 @@
 import { h, button } from '../dom.js';
-import { errorText, failText, STATUS_TEXT, formatTime, formatDate, renderMarkdown, personIndex, initial, memberSummary, modelLabel, effortLabel } from '../format.js';
+import { errorText, failText, STATUS_TEXT, formatTime, formatDate, renderMarkdown, personIndex, initial, memberSummary, modelLabel, effortLabel, MODELS } from '../format.js';
 import { openSheet, inputSheet, confirmSheet } from './sheet.js';
 import { attachAutocomplete } from './autocomplete.js';
 import { codeCard } from './codeChanges.js';
 import { usageBars } from './usage.js';
 
 const CLAUDE_START = /^\s*(@claude(?=\s|$)|\/)/i; // shared/protocol.js parseClaudeMention 과 같은 규칙
-const MODELS = ['opus', 'sonnet', 'haiku', 'fable'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PLACEHOLDER = { claude: 'Claude 에게 · / 로 명령·스킬, @ 로 파일', human: '사람끼리만 · Claude 는 보지 않아요' };
 const PREVIEW_LIMIT = 200 * 1024;
@@ -239,7 +238,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     if (!parts.length && req.status === 'running') parts.push(h('div', { class: 'sub' }, '작업하는 중이에요…'));
     if (!parts.length && !cards.length) return null;
     return h('div', { class: 'claude-group' },
-      parts.length ? h('div', { class: 'claude-block' }, h('div', { class: 'claude-label' }, model ? `Claude · ${model}` : 'Claude'), parts) : null,
+      parts.length ? h('div', { class: 'claude-block' }, h('div', { class: 'claude-label' }, model ? `Claude · ${modelLabel(model)}` : 'Claude'), parts) : null,
       cards);
   }
 

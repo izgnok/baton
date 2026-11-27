@@ -109,10 +109,18 @@ export function memberSummary(st) {
   return `연결한 레포: ${list(st.repos)} · 함께 읽는 폴더: ${list(st.readDirs)} · Claude 로그인 ${st.claude ? '○' : '×'}`;
 }
 
-const MODEL_LABEL = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' };
+/** 모델 선택 목록(정확한 모델 ID). 새 모델이 나오면 여기만 고친다 */
+export const MODELS = ['claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+const MODEL_LABEL = { opus: 'Opus(최신)', sonnet: 'Sonnet(최신)', haiku: 'Haiku(최신)', fable: 'Fable(최신)' };
 const EFFORT_LABEL = { low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
 /** 모델·노력 단계 표시 이름. 빈 값은 빈 글자 */
-export const modelLabel = (v) => (v ? MODEL_LABEL[v] ?? v : '');
+export function modelLabel(v) {
+  if (!v) return '';
+  if (MODEL_LABEL[v]) return MODEL_LABEL[v];
+  // claude-opus-5-5, claude-opus-5-5-20261101 → Opus 5.5
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)(?:-\d{8})?$/.exec(v);
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : v;
+}
 export const effortLabel = (v) => (v ? EFFORT_LABEL[v] ?? v : '');
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
