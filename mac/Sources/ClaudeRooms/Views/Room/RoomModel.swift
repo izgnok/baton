@@ -4,19 +4,21 @@ import Observation
 // MARK: 서버 메시지 → 화면 값
 
 /// Claude 답 안의 한 조각
-enum ClaudePart: Equatable {
+indirect enum ClaudePart: Equatable {
     case text(key: String, blocks: [MarkdownBlock])
-    case tool(key: String, name: String, input: JSON)
+    case tool(key: String, useId: String, name: String, input: JSON)
+    /// 생각 블록. 내용은 비어 올 수 있다. seconds 는 걸린 시간
+    case thinking(key: String, text: String, seconds: Int?)
+    /// 서브에이전트를 띄운 도구 카드. parts 는 그 안에서 한 일
+    case agent(key: String, title: String, running: Bool, parts: [ClaudePart])
     case error(String)
-    case note(String)
     /// 레포 브랜치를 옮겼다는 한 줄(rooms_branch_changes)
     case branch(key: String, text: String)
 
     var id: String {
         switch self {
-        case .text(let k, _), .tool(let k, _, _), .branch(let k, _): k
+        case .text(let k, _), .tool(let k, _, _, _), .thinking(let k, _, _), .agent(let k, _, _, _), .branch(let k, _): k
         case .error(let s): "error:\(s)"
-        case .note(let s): "note:\(s)"
         }
     }
 }
@@ -32,16 +34,32 @@ struct CodeResult: Equatable, Identifiable {
     var ahead: Int
 }
 
+/// 지금 단계 한 줄(실행 중인 요청의 Claude 블록 맨 아래)
+struct ProgressLine: Equatable {
+    var label: String
+    var detail: String
+    /// 요청 시각(ms). 지난 시간을 이 값으로 잰다
+    var since: Double
+}
+
 /// claude_event 한 건을 해석한 결과
 struct ParsedEvent: Equatable {
     var model: String?
+    /// 서브에이전트 안에서 온 이벤트면 그 서브에이전트를 띄운 tool_use id
+    var parent: String?
     var parts: [ClaudePart] = []
     var cards: [CodeResult] = []
+    var run: [RunEvent] = []
 
-    init?(id: Int, body: String) {
+    init?(id: Int, body: String, at: Double) {
         guard let ev = try? JSONDecoder().decode(JSON.self, from: Data(body.utf8)) else { return nil }
+        parent = ev["parent_tool_use_id"]?.string
+        run = RunEvent.parse(ev, id: id, at: at)
         switch ev["type"]?.string {
+        case "user", "system": break // 도구 결과·서브에이전트 끝남 알림: 진행 상태만 쓰고 그리지 않는다
         case "assistant":
+            // Claude Code 가 직접 만든 메시지(API 오류 등, 모델 "<synthetic>")는 그리지 않는다 — 같은 글이 result 오류로 한 번 더 온다
+            if ev["message"]?["model"]?.string == "<synthetic>" { break }
             model = ev["message"]?["model"]?.string
             let content = ev["message"]?["content"]
             if let s = content?.string {
@@ -50,7 +68,8 @@ struct ParsedEvent: Equatable {
                 for (i, c) in (content?.array ?? []).enumerated() {
                     switch c["type"]?.string {
                     case "text": parts.append(.text(key: "\(id):\(i)", blocks: markdownBlocks(c["text"]?.string ?? "")))
-                    case "tool_use": parts.append(.tool(key: "\(id):\(i)", name: c["name"]?.string ?? "", input: c["input"] ?? .null))
+                    case "thinking": parts.append(.thinking(key: "\(id):\(i)", text: c["thinking"]?.string ?? "", seconds: nil))
+                    case "tool_use": parts.append(.tool(key: "\(id):\(i)", useId: c["id"]?.string ?? "", name: c["name"]?.string ?? "", input: c["input"] ?? .null))
                     default: break
                     }
                 }
@@ -103,7 +122,7 @@ struct ChatMessage: Identifiable, Equatable {
         requestId = j["requestId"]?.int
         error = j["error"]?.string
         createdAt = j["createdAt"]?.number ?? 0
-        event = kind == "claude_event" ? ParsedEvent(id: id, body: body) : nil
+        event = kind == "claude_event" ? ParsedEvent(id: id, body: body, at: createdAt) : nil
     }
 }
 
@@ -111,13 +130,13 @@ struct ChatMessage: Identifiable, Equatable {
 enum ChatItem: Identifiable, Equatable {
     case human(ChatMessage, continuing: Bool)
     case request(ChatMessage, continuing: Bool)
-    case claude(requestId: Int, model: String?, parts: [ClaudePart], cards: [CodeResult])
+    case claude(requestId: Int, model: String?, parts: [ClaudePart], cards: [CodeResult], progress: ProgressLine?)
 
     var id: String {
         switch self {
         case .human(let m, _): "m\(m.id)"
         case .request(let m, _): "r\(m.id)"
-        case .claude(let rid, _, _, _): "c\(rid)"
+        case .claude(let rid, _, _, _, _): "c\(rid)"
         }
     }
 }
@@ -146,6 +165,8 @@ final class RoomModel {
     private(set) var version = 0
     var stick = false
     var openTools: Set<String> = []
+    /// 서브에이전트 카드 중 기본 펼침 상태(작업 중이면 펼침, 끝났으면 접힘)를 뒤집은 것
+    var toggledAgents: Set<String> = []
     var openDiffs: Set<String> = []
     var scrollRequest: ScrollRequest?
     /// 공유 파일 경로 목록(공유 파일 탭)
@@ -197,11 +218,11 @@ final class RoomModel {
     var approvals: [Int: ApprovalWait] { app.roomApprovals[roomId] ?? [:] }
     /// 코드 카드가 들어 있는 첫 Claude 항목의 id
     var firstCardItemID: String? {
-        items.first { if case .claude(_, _, _, let cards) = $0 { !cards.isEmpty } else { false } }?.id
+        items.first { if case .claude(_, _, _, let cards, _) = $0 { !cards.isEmpty } else { false } }?.id
     }
     var cardKeys: [String] {
         items.flatMap { item -> [String] in
-            if case .claude(_, _, _, let cards) = item { cards.map(\.id) } else { [] }
+            if case .claude(_, _, _, let cards, _) = item { cards.map(\.id) } else { [] }
         }
     }
 
@@ -394,11 +415,40 @@ final class RoomModel {
     }
 
     private func claudeItem(_ req: ChatMessage, _ events: [ParsedEvent]) -> ChatItem? {
-        var parts = events.flatMap(\.parts)
         let cards = events.flatMap(\.cards)
-        let model = events.compactMap(\.model).first
-        if parts.isEmpty && req.status == "running" { parts.append(.note("작업하는 중이에요…")) }
-        if parts.isEmpty && cards.isEmpty { return nil }
-        return .claude(requestId: req.id, model: model, parts: parts, cards: cards)
+        let model = events.filter { $0.parent == nil }.compactMap(\.model).first
+        let run = events.flatMap(\.run)
+        let running = req.status == "running"
+        let secs = RunProgress.thinkingSeconds(run)
+        let finished = RunProgress.finishedToolIds(run)
+
+        // 서브에이전트가 한 일은 그 도구 카드 안으로 옮긴다(부모를 모르는 이벤트는 최상위에 남는다)
+        let entries = events.flatMap { e in e.parts.map { (part: $0, parent: e.parent) } }
+        let agentIds = Set(entries.compactMap { e -> String? in
+            if case .tool(_, let id, let name, _) = e.part, RunProgress.isAgentTool(name) { id } else { nil }
+        })
+        let grouped = RunProgress.groupByParent(entries, parent: { $0.parent }, parents: agentIds)
+        func render(_ list: [(part: ClaudePart, parent: String?)]) -> [ClaudePart] {
+            list.map { entry in
+                switch entry.part {
+                case .tool(let key, let id, let name, let input) where RunProgress.isAgentTool(name):
+                    return .agent(key: key, title: RunProgress.agentTitle(input), running: running && !finished.contains(id),
+                                  parts: render(grouped.children[id] ?? []))
+                case .thinking(let key, let text, _):
+                    return .thinking(key: key, text: text, seconds: secs[key])
+                default:
+                    return entry.part
+                }
+            }
+        }
+        let parts = render(grouped.top)
+
+        var progress: ProgressLine?
+        if running {
+            let step = RunProgress.step(run)
+            progress = ProgressLine(label: step.label, detail: step.detail, since: req.createdAt)
+        }
+        if parts.isEmpty && cards.isEmpty && progress == nil { return nil }
+        return .claude(requestId: req.id, model: model, parts: parts, cards: cards, progress: progress)
     }
 }

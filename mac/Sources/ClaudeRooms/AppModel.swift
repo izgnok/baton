@@ -342,6 +342,14 @@ final class AppModel {
             usage = UsageState(p)
         case "update":
             update = UpdateState(p)
+        case "claude:update":
+            // Claude Code 자동 업데이트 결과
+            if p["updated"]?.bool == true {
+                let v = p["after"]?.string ?? ""
+                toast(p["reason"]?.string == "outdated" ? "Claude Code를 \(v)으로 업데이트했어요. 다시 보내 주세요" : "Claude Code를 \(v)으로 업데이트했어요")
+            } else if p["reason"]?.string == "outdated" {
+                toast(p["ok"]?.bool == true ? "Claude Code가 이미 최신이에요. 다시 보내 주세요" : "Claude Code를 업데이트하지 못했어요. 터미널에서 claude update 를 실행해 주세요")
+            }
         case "relaunch":
             MacActions.relaunch()
         case "capture:shot":

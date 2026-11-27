@@ -60,10 +60,18 @@ struct ComposerField: NSViewRepresentable {
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
         tv.autoresizingMask = NSView.AutoresizingMask.width
+        // 글이 늘면 텍스트 뷰 자체가 아래로 자라야 잘리지 않는다(없으면 처음 높이에 묶여 윗줄·아랫줄이 잘려 보임)
+        tv.minSize = NSSize(width: 0, height: Self.minHeight)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        container.heightTracksTextView = false
         tv.textContainerInset = NSSize(width: Self.padX, height: ((Self.minHeight - layout.defaultLineHeight(for: Self.font)) / 2).rounded())
         tv.setAccessibilityLabel("메시지 입력")
         tv.onFocus = { [weak c = context.coordinator] on in c?.focusChanged(on) }
         context.coordinator.textView = tv
+        // 창 폭이 바뀌어 줄바꿈이 달라지면 높이를 다시 잰다
+        tv.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.frameChanged(_:)),
+                                               name: NSView.frameDidChangeNotification, object: tv)
 
         let scroll = NSScrollView()
         scroll.documentView = tv
@@ -88,6 +96,7 @@ struct ComposerField: NSViewRepresentable {
             tv.textStorage?.replaceCharacters(in: full, with: NSAttributedString(string: model.text, attributes: Self.attributes))
             tv.setSelectedRange(NSRange(location: min(model.caret, (tv.string as NSString).length), length: 0))
             c.pushing = false
+            c.measure()
         }
         if c.focusServed != model.focusSerial {
             c.focusServed = model.focusSerial
@@ -95,13 +104,17 @@ struct ComposerField: NSViewRepresentable {
         }
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
-        let w = proposal.width ?? 400
-        guard let tv = scroll.documentView as? NSTextView, let layout = tv.layoutManager, let container = tv.textContainer else { return nil }
-        container.containerSize = NSSize(width: max(40, w - Self.padX * 2), height: CGFloat.greatestFiniteMagnitude)
+    /// 지금 폭에서 글이 차지하는 칸 높이(36~160)
+    static func fitHeight(_ tv: NSTextView) -> CGFloat {
+        guard let layout = tv.layoutManager, let container = tv.textContainer else { return minHeight }
         layout.ensureLayout(for: container)
         let h = ceil(layout.usedRect(for: container).height + tv.textContainerInset.height * 2)
-        return CGSize(width: w, height: min(Self.maxHeight, max(Self.minHeight, h)))
+        return min(maxHeight, max(minHeight, h))
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
+        // 폭은 받은 만큼만(글 길이로 넓어지지 않게), 높이는 모델 값(글이 바뀔 때 Coordinator 가 잰다)
+        CGSize(width: proposal.width ?? 0, height: model.fieldHeight)
     }
 
     @MainActor
@@ -119,7 +132,20 @@ struct ComposerField: NSViewRepresentable {
             if !on { model.blurred() }
         }
 
-        func textDidChange(_ n: Notification) { report() }
+        func textDidChange(_ n: Notification) {
+            report()
+            measure()
+        }
+
+        @objc func frameChanged(_ n: Notification) { measure() }
+
+        /// 글에 맞춰 칸 높이를 다시 재서 모델에 알리고, 커서 줄이 보이게 스크롤한다
+        func measure() {
+            guard let tv = textView else { return }
+            let h = ComposerField.fitHeight(tv)
+            if model.fieldHeight != h { model.fieldHeight = h }
+            DispatchQueue.main.async { tv.scrollRangeToVisible(tv.selectedRange()) }
+        }
 
         func textViewDidChangeSelection(_ n: Notification) { report() }
 

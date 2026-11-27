@@ -458,3 +458,14 @@ test('RUN_FINISH 가 거절되면 옮겨 둔 브랜치를 대기로 적고 작�
   assert.deepEqual(a.pendingSaved, [{ 1: 'feature/other' }]);
   assert.equal(await currentBranch(repo.wt), 'feature/other');
 });
+
+test('Claude Code 가 오래돼 모델을 못 쓴다는 오류면 onClaudeOutdated 를 부른다', async () => {
+  const s = setup();
+  let outdated = 0;
+  await runDone({ ...s, onClaudeOutdated: () => { outdated++; } }, { FAKE_STREAM: path.join(fx, 'stream-outdated.jsonl') });
+  assert.equal(outdated, 1);
+  const s2 = setup();
+  let other = 0;
+  await runDone({ ...s2, onClaudeOutdated: () => { other++; } }, { FAKE_STREAM: path.join(fx, 'stream-error.jsonl') });
+  assert.equal(other, 0);
+});

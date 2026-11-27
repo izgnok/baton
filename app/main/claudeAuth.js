@@ -28,3 +28,27 @@ export function claudeLogin() {
     child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('CLAUDE_LOGIN_FAILED'))));
   });
 }
+
+// `claude --version` 출력의 앞 버전 숫자. 못 읽으면 null
+function claudeVersion() {
+  return new Promise((resolve) => {
+    execFile(bin(), ['--version'], { timeout: 15000 }, (err, stdout) => {
+      resolve(err ? null : (/\d+\.\d+\.\d+/.exec(String(stdout)) ?? [null])[0]);
+    });
+  });
+}
+
+/**
+ * `claude update` 로 Claude Code 를 최신으로(5분 제한). 실패해도 던지지 않는다
+ * @returns {Promise<{ok: boolean, updated?: boolean, before?: string|null, after?: string|null, error?: string}>}
+ */
+export async function claudeUpdate() {
+  const before = await claudeVersion();
+  if (!before) return { ok: false, error: 'CLAUDE_NOT_FOUND' };
+  const ok = await new Promise((resolve) => {
+    execFile(bin(), ['update'], { timeout: 5 * 60 * 1000 }, (err) => resolve(!err));
+  });
+  if (!ok) return { ok: false, error: 'CLAUDE_UPDATE_FAILED', before };
+  const after = await claudeVersion();
+  return { ok: true, updated: !!after && after !== before, before, after };
+}

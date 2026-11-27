@@ -170,6 +170,10 @@ export async function startCapture(outDir) {
     const event = (requestId, ev) => b.request(MSG.RUN_EVENT, { requestId, event: ev });
     const text = (t) => ({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: t }] } });
     const tool = (id, name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+    const thinking = () => ({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '' }] } });
+    const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+    // 서브에이전트 안의 이벤트는 parent_tool_use_id 가 붙어 온다
+    const inner = (parent, ev) => ({ ...ev, parent_tool_use_id: parent });
 
     await b.request(MSG.CHAT_SEND, { roomId, text: '결제 실패 원인부터 볼까요?' });
     await handlers.sendMessage({ roomId, text: '좋아요, 로그 먼저 확인해 봐요' });
@@ -179,8 +183,16 @@ export async function startCapture(outDir) {
     await ask('@claude 결제 모듈에서 타임아웃 처리 위치 찾아줘', async ({ requestId, transcriptVersion }) => {
       await event(requestId, text(MD_FIND));
       await event(requestId, tool('t1', 'Read', { file_path: '/Users/haeun/repos/payment-api/src/payment/timeout.js' }));
-      await event(requestId, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'export const PAYMENT_TIMEOUT_MS = 5000;' }] } });
+      await event(requestId, result('t1', 'export const PAYMENT_TIMEOUT_MS = 5000;'));
+      await sleep(1500); // 생각 블록이 앞 이벤트로부터 몇 초 뒤에 온 것처럼 보이게
+      await event(requestId, thinking());
       await event(requestId, tool('t2', 'Bash', { command: 'grep -rn "PAYMENT_TIMEOUT_MS" src/payment | head -20' }));
+      await event(requestId, tool('a1', 'Agent', { description: '재시도 코드 위치 찾기', subagent_type: 'Explore', prompt: '재시도 로직이 있는 파일을 찾아줘' }));
+      await event(requestId, inner('a1', text('재시도 관련 파일을 찾아볼게요.')));
+      await event(requestId, inner('a1', tool('c1', 'Grep', { pattern: 'retry', path: 'src/payment' })));
+      await event(requestId, inner('a1', result('c1', 'src/payment/client.js:58')));
+      await event(requestId, inner('a1', text('재시도는 `client.js:58` 한 곳에만 있어요.')));
+      await event(requestId, result('a1', '재시도는 src/payment/client.js:58 한 곳에만 있어요.'));
       await event(requestId, text(MD_DONE));
       await event(requestId, { type: 'rooms_branch_changes', results: [{ repoId: repo1.id, repoName: 'payment-api', branch: 'feature/ABC-124', pending: true }] });
       await event(requestId, {
@@ -209,6 +221,12 @@ export async function startCapture(outDir) {
     let runningId = 0;
     await ask('@claude 재시도 정책 초안도 써줘', async ({ requestId }) => {
       runningId = requestId;
+      await event(requestId, thinking());
+      await event(requestId, tool('r1', 'Agent', { description: '로그 확인', subagent_type: 'Explore', prompt: '결제 실패 로그를 확인해줘' }));
+      await event(requestId, inner('r1', text('실패 로그를 확인하고 있어요.')));
+      await event(requestId, inner('r1', tool('rc1', 'Read', { file_path: '/Users/haeun/repos/payment-api/logs/payment.log' })));
+      await event(requestId, result('r1', 'Async agent launched successfully.'));
+      await event(requestId, tool('r2', 'Bash', { command: 'grep -rn "timeout" src/payment --include=*.js | head -50' }));
       hb = setInterval(() => b.request(MSG.RUN_HEARTBEAT, { requestId }).catch(() => {}), 5000);
       await b.request(MSG.RUN_APPROVAL, { requestId, state: 'pending', toolName: 'Bash' });
     });

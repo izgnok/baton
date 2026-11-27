@@ -69,5 +69,6 @@ import Testing
         #expect(Format.contextLabel(tokens: 900, model: "claude-sonnet-5-5") == "컨텍스트 1% · 900/100만")
         #expect(Format.contextLabel(tokens: 0, model: nil) == "컨텍스트 0% · 0/100만")
         #expect(Format.contextWindow("claude-haiku-4-5") == 200_000)
+        #expect(Format.modelLabel("<synthetic>") == "") // Claude Code 가 만든 메시지는 모델 이름 없이
     }
 }

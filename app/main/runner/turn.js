@@ -28,13 +28,13 @@ const isGitDir = (d) => fs.existsSync(path.join(d, '.git'));
  *   askUser: (q: object) => Promise<'allow'|'deny'>, closeApproval?: (requestId: number) => void,
  *   pendingBranches?: Record<string, string>, onPendingBranches?: (next: Record<string, string>) => void,
  *   readDirs?: string[], repoIndex?: {path: string, name: string, remoteUrl: string}[],
- *   model?: string, effort?: string, onRateLimit?: (ev: object) => void,
+ *   model?: string, effort?: string, onRateLimit?: (ev: object) => void, onClaudeOutdated?: () => void,
  *   claudeBin?: string, heartbeatMs?: number, signal?: AbortSignal}} opts
  * @returns {Promise<{ok: boolean, error?: string}>}
  */
 export async function runTurn({
   runStart, roomState, roomRepoPaths, client, http, askUser, closeApproval,
-  pendingBranches = {}, onPendingBranches, readDirs = [], repoIndex = [], model, effort, onRateLimit, claudeBin, heartbeatMs = 10000, signal,
+  pendingBranches = {}, onPendingBranches, readDirs = [], repoIndex = [], model, effort, onRateLimit, onClaudeOutdated, claudeBin, heartbeatMs = 10000, signal,
 }) {
   const { requestId, roomId } = runStart;
   const send = (type, payload) => Promise.resolve().then(() => client.request(type, payload));
@@ -107,9 +107,14 @@ export async function runTurn({
       claudeBin,
       signal,
       onEvent: (ev) => {
-        if (ev.type === 'system') return; // hook·init 은 화면에 필요 없다
+        // hook·init 은 화면에 필요 없다. 서브에이전트가 끝났다는 알림만 통과(백그라운드 서브에이전트의 "끝남" 표시)
+        if (ev.type === 'system' && ev.subtype !== 'task_notification') return;
         // 내 사용량은 서버로 보내지 않고 이 PC 에만 둔다
         if (ev.type === 'rate_limit_event') { try { onRateLimit?.(ev); } catch { /* 저장 실패는 실행을 막지 않는다 */ } return; }
+        // 이 맥의 Claude Code 가 오래돼 모델을 못 쓰면 업데이트를 맡긴다(사용자는 [다시 보내기])
+        if (ev.type === 'result' && ev.is_error && /or newer is required/i.test(String(ev.result ?? ''))) {
+          try { onClaudeOutdated?.(); } catch { /* 업데이트 실패는 실행 결과와 무관 */ }
+        }
         send(MSG.RUN_EVENT, { requestId, event: ev }).catch(() => {});
       },
     });

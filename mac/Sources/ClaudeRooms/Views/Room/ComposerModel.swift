@@ -14,6 +14,8 @@ final class ComposerModel {
 
     private(set) var text = ""
     private(set) var caret = 0
+    /// 입력칸 높이(글에 맞춰 입력칸이 잰다, 36~160). SwiftUI 가 이 값으로 칸 높이를 다시 잡는다
+    var fieldHeight: CGFloat = 36
     /// 밖에서 글을 바꿨을 때 올라간다
     private(set) var pushSerial = 0
     /// 입력칸에 포커스를 돌려줄 때 올라간다

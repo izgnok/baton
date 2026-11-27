@@ -2,3 +2,4 @@ node_modules/
 server/data/
 app/renderer/vendor/
 mac/.build/
+.DS_Store

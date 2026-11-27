@@ -6,7 +6,7 @@ public enum ToolText {
         "Write": "파일 쓰기", "Edit": "파일 고치기", "MultiEdit": "파일 고치기", "Read": "파일 읽기",
         "Bash": "명령 실행", "Grep": "내용 찾기", "Glob": "파일 찾기",
         "WebFetch": "웹 페이지 읽기", "WebSearch": "웹 검색", "NotebookEdit": "노트북 고치기",
-        "Task": "하위 작업", "TodoWrite": "할 일 정리",
+        "Task": "하위 작업", "Agent": "하위 작업", "TodoWrite": "할 일 정리",
     ]
 
     /// 도구 이름 → 화면 이름. 표에 없으면 원래 이름
@@ -33,7 +33,7 @@ public enum ToolText {
         case "Grep", "Glob": detail = text("pattern")
         case "WebFetch": detail = text("url")
         case "WebSearch": detail = text("query")
-        case "Task": detail = text("description")
+        case "Task", "Agent": detail = text("description")
         default: detail = ""
         }
         return (label(name), detail.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " "))

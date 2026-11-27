@@ -16,7 +16,8 @@ export function runClaude({
   cwd, prompt, sessionId, addDirs = [], systemPrompt, mcpConfigPath, permissionMode, model, effort, env = {}, allowedTools = [],
   onEvent = () => {}, claudeBin = process.env.CLAUDE_BIN || 'claude', signal,
 }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  // --forward-subagent-text: 서브에이전트의 글·도구 사용을 parent_tool_use_id 와 함께 받는다
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text'];
   if (sessionId) args.push('--resume', sessionId);
   for (const d of addDirs) args.push('--add-dir', d);
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);

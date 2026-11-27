@@ -43,7 +43,7 @@ test('성공: 이벤트 수·sessionId·result, stdin 으로 프롬프트, resum
   assert.deepEqual(result, { sessionId: SID, result: 'ok', permissionDenials: [] });
   assert.equal(rec.stdin, '프롬프트\n두 줄');
   assert.equal(fs.realpathSync(rec.cwd), fs.realpathSync(tmp));
-  assert.deepEqual(rec.argv, ['-p', '--output-format', 'stream-json', '--verbose']);
+  assert.deepEqual(rec.argv, ['-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text']);
 });
 
 test('옵션은 각각 정확한 인자로 들어간다', async () => {
@@ -51,7 +51,7 @@ test('옵션은 각각 정확한 인자로 들어간다', async () => {
     sessionId: 'abc', addDirs: ['/r1', '/r2'], systemPrompt: '목차', mcpConfigPath: '/m.json', permissionMode: 'default',
   });
   assert.deepEqual(rec.argv, [
-    '-p', '--output-format', 'stream-json', '--verbose', '--resume', 'abc',
+    '-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text', '--resume', 'abc',
     '--add-dir', '/r1', '--add-dir', '/r2', '--append-system-prompt', '목차',
     '--mcp-config', '/m.json', '--permission-prompt-tool', 'mcp__rooms__approve',
     '--permission-mode', 'default',
@@ -63,14 +63,14 @@ test('env 는 환경 변수에 더해지고, allowedTools 는 한 개씩 인자�
     env: { EXTRA_FLAG: 'on' }, allowedTools: ['mcp__rooms__git_read', 'Read(//a/**)'],
   });
   assert.deepEqual(rec.argv, [
-    '-p', '--output-format', 'stream-json', '--verbose', '--allowedTools', 'mcp__rooms__git_read', 'Read(//a/**)',
+    '-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text', '--allowedTools', 'mcp__rooms__git_read', 'Read(//a/**)',
   ]);
   assert.equal(rec.extraFlag, 'on');
 });
 
 test('model·effort 는 있을 때만 --model·--effort 로, 빈 값이면 안 붙는다', async () => {
   const withBoth = await run('stream-ok.jsonl', { model: 'opus', effort: 'high' });
-  assert.deepEqual(withBoth.rec.argv, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'opus', '--effort', 'high']);
+  assert.deepEqual(withBoth.rec.argv, ['-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text', '--model', 'opus', '--effort', 'high']);
   const empty = await run('stream-ok.jsonl', { model: '', effort: undefined });
   assert.equal(empty.rec.argv.includes('--model') || empty.rec.argv.includes('--effort'), false);
 });

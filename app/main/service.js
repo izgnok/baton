@@ -10,7 +10,7 @@ import { createUpdater } from './updater.js';
 import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
 import { listSkills } from './skills.js';
 import { createServerClient, login, signup, getServerCommit } from './serverClient.js';
-import { claudeAuthStatus, claudeLogin } from './claudeAuth.js';
+import { claudeAuthStatus, claudeLogin, claudeUpdate } from './claudeAuth.js';
 import { cloneRepo as gitClone, inspectRepo, preflight } from './runner/preflight.js';
 import { runTurn } from './runner/turn.js';
 import { roomDirOf } from './runner/sync.js';
@@ -92,6 +92,7 @@ export function createService({ emit, relaunch }) {
         readDirs: config.rooms[roomId]?.readDirs ?? [],
         repoIndex: config.repoIndex?.repos ?? [],
         ...effectiveModel(config, roomId, state.room), // 개인 선택 → 방 기본 → 내 Claude 설정
+        onClaudeOutdated: () => { updateClaude('outdated'); },
         onRateLimit: (ev) => {
           const usage = mergeUsage(config.usage, ev, Date.now());
           if (!usage) return;
@@ -204,6 +205,17 @@ export function createService({ emit, relaunch }) {
   const syncShared = (roomId) => sharedSync.sync(Number(roomId));
 
   // 사용량: 실행 때 오는 값 외에도 `claude -p /usage`(모델 호출 없음)로 5분마다·창으로 돌아올 때(1분에 한 번까지) 읽는다
+  // Claude Code 업데이트(동시에 한 번만). 바뀌었거나, 오래돼 실패한 경우엔 결과를 화면에 알린다
+  let claudeUpdating = null;
+  function updateClaude(reason) {
+    claudeUpdating ??= claudeUpdate().then((r) => {
+      claudeCache = { at: 0, ok: false }; // 로그인 상태도 다시 읽게
+      if (r.updated || reason === 'outdated') emit('claude:update', { ...r, reason });
+      return r;
+    }).finally(() => { claudeUpdating = null; });
+    return claudeUpdating;
+  }
+
   let usageAt = 0;
   async function refreshUsage() {
     if (process.env.ROOMS_SCREENSHOT || process.env.ROOMS_NO_BACKGROUND || Date.now() - usageAt < 60000) return;
@@ -450,6 +462,9 @@ export function createService({ emit, relaunch }) {
     if (background) {
       refreshUsage();
       setInterval(refreshUsage, 5 * 60 * 1000).unref();
+      // Claude Code 를 최신으로: 시작 10초 뒤, 그 뒤 6시간마다(새 모델은 새 버전을 요구한다)
+      setTimeout(() => updateClaude('auto'), 10000).unref();
+      setInterval(() => updateClaude('auto'), 6 * 60 * 60 * 1000).unref();
       rescan().catch((e) => console.error('레포 찾기 실패', e)); // 저장된 목록을 먼저 쓰고 백그라운드에서 다시 찾는다
     }
   }

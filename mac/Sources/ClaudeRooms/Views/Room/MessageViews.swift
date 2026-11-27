@@ -52,8 +52,8 @@ struct ChatItemView: View {
             HumanMessageView(model: model, m: m, continuing: continuing, isRequest: false)
         case .request(let m, let continuing):
             HumanMessageView(model: model, m: m, continuing: continuing, isRequest: true)
-        case .claude(_, let modelName, let parts, let cards):
-            ClaudeGroupView(model: model, modelName: modelName, parts: parts, cards: cards)
+        case .claude(_, let modelName, let parts, let cards, let progress):
+            ClaudeGroupView(model: model, modelName: modelName, parts: parts, cards: cards, progress: progress)
         }
     }
 }
@@ -159,15 +159,17 @@ struct ClaudeGroupView: View {
     let modelName: String?
     let parts: [ClaudePart]
     let cards: [CodeResult]
+    let progress: ProgressLine?
     @Environment(\.chatWidth) private var chatWidth
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !parts.isEmpty {
+            if !parts.isEmpty || progress != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(modelName.map { "Claude · \(Format.modelLabel($0))" } ?? "Claude")
+                    Text(modelName.map(Format.modelLabel).flatMap { $0.isEmpty ? nil : "Claude · \($0)" } ?? "Claude")
                         .typo(.uiStrong).foregroundStyle(Theme.accentText)
-                    ForEach(parts, id: \.id) { part in partView(part) }
+                    ForEach(parts, id: \.id) { part in ClaudePartView(model: model, part: part) }
+                    if let progress { ProgressLineView(line: progress) }
                 }
                 .padding(.horizontal, 4)
             }
@@ -176,20 +178,122 @@ struct ClaudeGroupView: View {
         .frame(maxWidth: chatWidth * 0.88, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    @ViewBuilder
-    private func partView(_ part: ClaudePart) -> some View {
+/// Claude 답 안의 조각 하나(서브에이전트 카드 안에서도 같은 걸 쓴다)
+struct ClaudePartView: View {
+    let model: RoomModel
+    let part: ClaudePart
+
+    var body: some View {
         switch part {
         case .text(_, let blocks): MarkdownView(blocks: blocks)
-        case .tool(let key, let name, let input): ToolLineView(model: model, key: key, name: name, input: input)
+        case .tool(let key, _, let name, let input): ToolLineView(model: model, key: key, name: name, input: input)
+        case .thinking(let key, let text, let seconds): ThinkingLineView(model: model, key: key, text: text, seconds: seconds)
+        case .agent(let key, let title, let running, let parts): AgentCardView(model: model, key: key, title: title, running: running, parts: parts)
         case .error(let text): Text(text).typo(.ui).foregroundStyle(Theme.dangerText)
-        case .note(let text): Text(text).typo(.ui).foregroundStyle(Theme.sub)
         case .branch(_, let text):
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
                 Text(text).lineLimit(2).truncationMode(.middle).help(text)
             }
             .typo(.caption).foregroundStyle(Theme.sub)
+        }
+    }
+}
+
+/// 지금 단계 한 줄 + 요청 시각부터 지난 시간(1초마다 갱신). 길이가 넘치면 값만 말줄임
+struct ProgressLineView: View {
+    let line: ProgressLine
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let sec = Int((ctx.date.timeIntervalSince1970 * 1000 - line.since) / 1000)
+            let tip = line.detail.isEmpty ? line.label : "\(line.label) · \(line.detail)"
+            HStack(spacing: 6) {
+                Text(line.detail.isEmpty ? line.label : "\(line.label) ·").fixedSize()
+                if !line.detail.isEmpty { Text(line.detail).lineLimit(1).truncationMode(.tail) }
+                Text((line.detail.isEmpty && line.label.hasSuffix("…") ? "" : "· ") + RunProgress.elapsedText(sec)).fixedSize()
+            }
+            .typo(.ui).foregroundStyle(Theme.sub)
+            .padding(.horizontal, 12)
+            .help(tip)
+        }
+    }
+}
+
+/// 생각 블록 한 줄. 내용이 있으면 눌러서 펼친다
+struct ThinkingLineView: View {
+    let model: RoomModel
+    let key: String
+    let text: String
+    let seconds: Int?
+
+    var body: some View {
+        let title = "생각함" + (seconds.map { " · \(RunProgress.elapsedText($0))" } ?? "")
+        let open = model.openTools.contains(key)
+        VStack(alignment: .leading, spacing: 4) {
+            if text.isEmpty {
+                Text(title).padding(.horizontal, 12)
+            } else {
+                Button {
+                    if open { model.openTools.remove(key) } else { model.openTools.insert(key) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(open ? "▾" : "▸").frame(width: 10)
+                        Text(title)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if open {
+                    Text(text).lineSpacing(3).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                }
+            }
+        }
+        .typo(.ui).foregroundStyle(Theme.sub)
+    }
+}
+
+/// 서브에이전트 카드. 작업 중이면 펼침, 끝났으면 접힘이 기본이고 머리를 누르면 뒤집힌다
+struct AgentCardView: View {
+    let model: RoomModel
+    let key: String
+    let title: String
+    let running: Bool
+    let parts: [ClaudePart]
+
+    var body: some View {
+        let open = running != model.toggledAgents.contains(key)
+        let head = title.isEmpty ? "서브에이전트" : "서브에이전트 · \(title)"
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if model.toggledAgents.contains(key) { model.toggledAgents.remove(key) } else { model.toggledAgents.insert(key) }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(open ? "▾" : "▸").frame(width: 10)
+                    Text(head).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    Text(running ? "작업 중" : "끝남").typo(.caption).foregroundStyle(running ? Theme.accentText : Theme.sub).fixedSize()
+                }
+                .typo(.ui).foregroundStyle(Theme.sub)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+            .help(head)
+            if open && !parts.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(parts, id: \.id) { part in ClaudePartView(model: model, part: part) }
+                }
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 2) }
+                .padding(.leading, 12)
+            }
         }
     }
 }

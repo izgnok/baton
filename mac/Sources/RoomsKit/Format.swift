@@ -190,7 +190,7 @@ public enum Format {
 
     /// 모델 표시 이름. 빈 값은 빈 글자
     public static func modelLabel(_ v: String?) -> String {
-        guard let v, !v.isEmpty else { return "" }
+        guard let v, !v.isEmpty, v != "<synthetic>" else { return "" }
         if let l = modelLabels[v] { return l }
         // claude-opus-5-5, claude-opus-5-5-20261101 → Opus 5.5
         let p = v.split(separator: "-", omittingEmptySubsequences: false).map(String.init)

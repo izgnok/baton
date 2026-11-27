@@ -89,6 +89,8 @@ struct Composer: View {
 
     private var field: some View {
         ComposerField(model: cm)
+            .frame(maxWidth: .infinity) // 띄어쓰기 없는 긴 글이 창을 옆으로 밀지 않게
+            .frame(height: cm.fieldHeight)
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(cm.focused ? Theme.accent : .clear, lineWidth: 2))
             .overlay(alignment: .leading) {
