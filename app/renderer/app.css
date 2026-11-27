@@ -198,6 +198,9 @@ button, input, textarea { font: inherit; color: inherit; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .panel .btn-secondary, .panel .btn-primary { height: 48px; font-size: 15px; }
 .file-dir { font-size: 13px; color: var(--sub); margin-top: 4px; }
+.shared-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.shared-head .sub { flex: 1; font-size: 12px; }
+.shared-head .btn { flex-shrink: 0; }
 .file-item {
   display: block; width: 100%; text-align: left; border: 0; cursor: pointer; background: var(--card);
   border-radius: var(--r-btn); padding: 12px 16px; overflow-wrap: anywhere;

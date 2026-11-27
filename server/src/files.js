@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { safeJoin } from '@rooms/shared/paths.js';
 import { listFiles } from '@rooms/shared/manifest.js';
 
@@ -66,6 +66,30 @@ export function createFileStore(dataDir) {
         if (c.contentBase64 === null) fs.rmSync(files[i], { force: true });
         else writeAtomic(files[i], Buffer.from(c.contentBase64, 'base64'));
       });
+    },
+
+    /**
+     * 사람이 직접 고친 파일 올리기. baseSha 는 고치기 전 내용의 sha(새 파일이면 null).
+     * 서버 내용이 이미 같으면 그대로 두고, baseSha 와 다르면(누가 먼저 고침) 충돌로 돌려준다
+     * @param {{path: string, baseSha: string|null, contentBase64: string|null}[]} changes
+     * @returns {{applied: string[], conflicts: string[]}}
+     */
+    putShared(roomId, changes) {
+      const dir = sharedDir(roomId);
+      const files = changes.map((c) => safeJoin(dir, c.path));
+      const shaOf = (buf) => createHash('sha256').update(buf).digest('hex');
+      const applied = [];
+      const conflicts = [];
+      changes.forEach((c, i) => {
+        let cur = null;
+        try { cur = shaOf(fs.readFileSync(files[i])); } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'EISDIR') throw e; }
+        const data = c.contentBase64 === null ? null : Buffer.from(c.contentBase64, 'base64');
+        if (cur === (data && shaOf(data))) return;
+        if (cur !== c.baseSha) return void conflicts.push(c.path);
+        if (data) writeAtomic(files[i], data); else fs.rmSync(files[i], { force: true });
+        applied.push(c.path);
+      });
+      return { applied, conflicts };
     },
 
     removeRoom(roomId) {

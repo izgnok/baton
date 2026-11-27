@@ -121,6 +121,17 @@ export function attachWs(server, { db, files }) {
     [MSG.CHAT_SEND]: (u, m) => queue.postMessage(u, Number(m.roomId), m.text),
     [MSG.REQUEST_RETRY]: (u, m) => queue.retry(u, Number(m.requestId)),
     [MSG.REQUEST_CANCEL]: (u, m) => queue.cancel(u, Number(m.requestId)),
+    [MSG.SHARED_PUT]: (u, m) => {
+      const roomId = Number(m.roomId);
+      if (!R.isMember(db, u, roomId)) throw new Error('FORBIDDEN');
+      const ch = m.changes;
+      if (!Array.isArray(ch) || !ch.length || !ch.every((c) => c && typeof c.path === 'string'
+        && (c.baseSha === null || typeof c.baseSha === 'string')
+        && (c.contentBase64 === null || typeof c.contentBase64 === 'string'))) throw bad();
+      const r = files.putShared(roomId, ch);
+      if (r.applied.length) broadcast(roomId, { type: MSG.SHARED_CHANGED, roomId, userId: u });
+      return r;
+    },
     [MSG.MEMBER_STATUS]: (u, m) => {
       const roomId = Number(m.roomId);
       if (!R.isMember(db, u, roomId)) throw new Error('FORBIDDEN');
@@ -161,6 +172,7 @@ export function attachWs(server, { db, files }) {
         apply: () => {
           files.applyShared(roomId, changes);
           files.writeTranscript(roomId, m.transcript); // 대화 원본은 마지막에 쓴다
+          if (changes.length) broadcast(roomId, { type: MSG.SHARED_CHANGED, roomId, userId: u });
         },
       });
     },

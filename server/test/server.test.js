@@ -282,3 +282,26 @@ test('GET /version: 서버 시작 때 정한 commit', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('shared.put: 멤버만 올리고, 반영되면 방 멤버에게 shared.changed', async () => {
+  const a = await signup('sp-a');
+  const b = await signup('sp-b');
+  const c = await signup('sp-c');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const C = await login(c.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '공유' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+  const b64 = (s) => Buffer.from(s).toString('base64');
+
+  const changed = B.next((m) => m.type === MSG.SHARED_CHANGED);
+  const r = await A.ok(MSG.SHARED_PUT, { roomId: room.id, changes: [{ path: 'outputs/a.md', baseSha: null, contentBase64: b64('hi') }] });
+  assert.deepEqual(r, { applied: ['outputs/a.md'], conflicts: [] });
+  assert.deepEqual([(await timeout(changed)).roomId], [room.id]);
+  assert.equal(await (await get(`/rooms/${room.id}/shared?path=outputs/a.md`, b.token)).text(), 'hi');
+
+  assert.equal((await C.req(MSG.SHARED_PUT, { roomId: room.id, changes: [{ path: 'x.md', baseSha: null, contentBase64: b64('x') }] })).error, 'FORBIDDEN');
+  assert.equal((await A.req(MSG.SHARED_PUT, { roomId: room.id, changes: [{ path: 'x.md', baseSha: 1, contentBase64: 'x' }] })).error, 'INVALID_INPUT');
+  assert.equal((await A.req(MSG.SHARED_PUT, { roomId: room.id, changes: [] })).error, 'INVALID_INPUT');
+  await Promise.all([A.close(), B.close(), C.close()]);
+});

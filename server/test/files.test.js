@@ -71,3 +71,21 @@ test('readShared 없는 파일은 NOT_FOUND, 나쁜 경로는 BAD_PATH, removeRo
   assert.equal(fs.existsSync(path.join(dir, 'rooms', '1')), false);
   store.removeRoom(1);
 });
+
+test('putShared: 기준이 같으면 반영, 누가 먼저 고쳤으면 충돌, 내용이 이미 같으면 그대로', () => {
+  const { store } = setup();
+  const sha = (s) => createHash('sha256').update(s).digest('hex');
+  store.applyShared(1, [{ path: 'a.md', contentBase64: b64('v1') }, { path: 'b.md', contentBase64: b64('b') }]);
+  const r = store.putShared(1, [
+    { path: 'a.md', baseSha: sha('v1'), contentBase64: b64('v2') }, // 반영
+    { path: 'b.md', baseSha: sha('old'), contentBase64: b64('mine') }, // 충돌
+    { path: 'new.md', baseSha: null, contentBase64: b64('n') }, // 새 파일
+    { path: 'same.md', baseSha: sha('zzz'), contentBase64: null }, // 이미 없음 → 그대로
+  ]);
+  assert.deepEqual(r, { applied: ['a.md', 'new.md'], conflicts: ['b.md'] });
+  assert.equal(store.readShared(1, 'a.md').toString(), 'v2');
+  assert.equal(store.readShared(1, 'b.md').toString(), 'b');
+  assert.deepEqual(store.putShared(1, [{ path: 'a.md', baseSha: sha('v1'), contentBase64: b64('v2') }]), { applied: [], conflicts: [] });
+  assert.deepEqual(store.putShared(1, [{ path: 'new.md', baseSha: sha('n'), contentBase64: null }]), { applied: ['new.md'], conflicts: [] });
+  assert.throws(() => store.putShared(1, [{ path: '../x', baseSha: null, contentBase64: b64('x') }]), { message: 'BAD_PATH' });
+});

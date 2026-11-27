@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { MSG } from '@rooms/shared/protocol.js';
 import { fixPath } from './env.js';
 import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, roomsHome } from './localConfig.js';
-import { mergeUsage } from './usage.js';
+import { mergeUsage, fetchUsage } from './usage.js';
 import { createUpdater } from './updater.js';
 import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
 import { listSkills } from './skills.js';
@@ -15,7 +15,8 @@ import { createServerClient, login, signup, getServerCommit } from './serverClie
 import { claudeAuthStatus, claudeLogin } from './claudeAuth.js';
 import { cloneRepo as gitClone, inspectRepo, preflight } from './runner/preflight.js';
 import { runTurn } from './runner/turn.js';
-import { pullRoom, roomDirOf } from './runner/sync.js';
+import { roomDirOf } from './runner/sync.js';
+import { createSharedSync } from './sharedSync.js';
 import { safeJoin } from '@rooms/shared/paths.js';
 import { worktreePath, isProtectedBranch, removeWorktree, listRepoFiles } from './runner/worktree.js';
 import { startCapture } from './capture.js';
@@ -73,6 +74,8 @@ async function handleRunStart(runStart) {
         return void client?.request(MSG.RUN_FAIL, { requestId, reason: e.message }).catch(() => {});
       }
     }
+    // 실행이 공유 폴더를 서버 내용으로 덮기 전에, 직접 고친 파일부터 올린다
+    await sharedSync.pushLocal(roomId).catch((e) => console.error('공유 파일 올리기 실패', e));
     await runTurn({
       runStart,
       roomState: state,
@@ -97,6 +100,7 @@ async function handleRunStart(runStart) {
     runs.delete(requestId);
     const n = (runningRooms.get(roomId) ?? 1) - 1;
     if (n > 0) runningRooms.set(roomId, n); else runningRooms.delete(roomId);
+    if (!n) syncShared(roomId).catch(() => {}); // 실행이 올린 결과로 기준(스냅샷)을 다시 맞춘다
   }
 }
 
@@ -121,6 +125,10 @@ function connectClient() {
       if (linked || renamed) sendMemberStatus(roomId);
       rescanIfMissing();
     } else if (m.type === MSG.ROOM_DELETE) roomCache.delete(m.roomId);
+    // 다른 사람이 공유 파일을 바꿨으면 이 PC 에 받아 둔 방만 다시 맞춘다
+    else if (m.type === MSG.SHARED_CHANGED && fs.existsSync(roomDirOf(m.roomId))) {
+      syncShared(m.roomId).catch((e) => console.error('공유 파일 받기 실패', e));
+    }
     if (m.type === MSG.RUN_START) return void handleRunStart(m.runStart);
     if (m.type === MSG.RUN_CANCEL) return void runs.get(Number(m.requestId))?.abort();
     toRenderer('rooms:event', m);
@@ -182,9 +190,24 @@ function rescan() {
 
 // 방 공유 파일을 내 PC 폴더(~/.claude-rooms/<방>/shared)에 받아 둔다.
 // 이 PC 에서 그 방의 Claude 가 실행 중이면 작업 중인 파일을 덮어쓰지 않게 건너뛴다
-async function syncShared(roomId) {
-  if (!client || runningRooms.has(roomId)) return;
-  await pullRoom({ http: client.http, roomId, roomDir: roomDirOf(roomId) });
+const sharedSync = createSharedSync({
+  getClient: () => client,
+  roomDirOf,
+  isRunning: (roomId) => runningRooms.has(roomId),
+  onConflict: (roomId, paths) => toRenderer('rooms:event', { type: 'local.sharedConflict', roomId, paths }),
+});
+const syncShared = (roomId) => sharedSync.sync(Number(roomId));
+
+// 사용량: 실행 때 오는 값 외에도 `claude -p /usage`(모델 호출 없음)로 5분마다·창으로 돌아올 때(1분에 한 번까지) 읽는다
+let usageAt = 0;
+async function refreshUsage() {
+  if (process.env.ROOMS_SCREENSHOT || Date.now() - usageAt < 60000) return;
+  usageAt = Date.now();
+  const found = await fetchUsage().catch(() => undefined);
+  if (!found) return;
+  config = { ...config, usage: { ...config.usage, ...found, updatedAt: Date.now() } };
+  saveConfig(config);
+  toRenderer('usage', config.usage);
 }
 const sharedDirOf = (roomId) => path.join(roomDirOf(Number(roomId)), 'shared');
 
@@ -467,7 +490,7 @@ function createWindow() {
       preload: path.join(here, 'preload.cjs'),
     },
   });
-  win.on('focus', rescanIfMissing); // 터미널에서 clone 하고 돌아왔을 때
+  win.on('focus', () => { rescanIfMissing(); refreshUsage(); }); // 터미널에서 clone 하고 돌아왔을 때 등
   // 링크는 앱 안에서 열지 않는다. http(s) 만 기본 브라우저로 보낸다
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -515,6 +538,10 @@ async function main() {
   if (!cap) updater.start();
   connectClient();
   createWindow();
+  if (!cap) {
+    refreshUsage();
+    setInterval(refreshUsage, 5 * 60 * 1000).unref();
+  }
   if (!cap) rescan().catch((e) => console.error('레포 찾기 실패', e)); // 저장된 목록을 먼저 쓰고 백그라운드에서 다시 찾는다
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   if (cap) {

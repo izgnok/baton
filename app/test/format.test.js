@@ -58,8 +58,8 @@ test('사용량 문구: 5시간은 시각, 주간은 요일 + 시각, 지난 시
 });
 
 test('멤버 연결 요약·모델 이름·중단됨 문구', () => {
-  assert.equal(memberSummary({ repos: ['a', 'b'], readDirs: ['x'], claude: true }), '연결한 레포: a, b · 함께 읽는 폴더: x · Claude 로그인 ○');
-  assert.equal(memberSummary({ repos: [], readDirs: [], claude: false }), '연결한 레포: 없음 · 함께 읽는 폴더: 없음 · Claude 로그인 ×');
+  assert.equal(memberSummary({ repos: ['a', 'b'], readDirs: ['x'], claude: true }), '연결한 레포: a, b · 자기 맥에서 함께 읽는 폴더: x · Claude 로그인 ○');
+  assert.equal(memberSummary({ repos: [], readDirs: [], claude: false }), '연결한 레포: 없음 · 자기 맥에서 함께 읽는 폴더: 없음 · Claude 로그인 ×');
   assert.equal(memberSummary(undefined), '아직 연결 정보가 없어요');
   assert.deepEqual([modelLabel('opus'), modelLabel('claude-x-1'), modelLabel('')], ['Opus(최신)', 'claude-x-1', '']);
   assert.deepEqual([modelLabel('claude-opus-5-5'), modelLabel('claude-fable-5-2'), modelLabel('claude-haiku-5-5-20261101')],

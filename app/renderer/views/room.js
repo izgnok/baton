@@ -369,7 +369,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
       if (res.worktreeExists) lines.push(h('div', { class: 'path' }, `방 작업 폴더 · ${res.worktreePath}`));
       if (res.indexed) lines.push(h('div', { class: 'chip-ok' }, '자동 연결됨'));
       lines.push(res.block ? h('div', { class: 'status-bad' }, BLOCK_TEXT[res.block]) : h('div', { class: 'status-ok' }, '정상'));
-      if (res.protected) lines.push(h('div', { class: 'status-warn' }, '보호 브랜치라 자동으로 올리지 않아요'));
+      if (res.protected) lines.push(h('div', { class: 'status-warn' }, '보호 브랜치라 Claude 가 push 하지 않아요'));
     }
     const busy = cloning.has(r.id);
     const row = h('div', { class: 'row' }, small('폴더 고르기', () => pick(r)));
@@ -405,8 +405,8 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     panelBody.append(...state.repos.map(repoCard));
     // 레포가 없는 방에서도 보인다
     panelBody.append(h('div', { class: 'mini-card' },
-      h('div', { class: 'name' }, '함께 읽는 폴더'),
-      h('div', { class: 'sub' }, 'Claude 가 읽기만 하는 폴더예요'),
+      h('div', { class: 'name' }, '내 맥에서 함께 읽을 폴더'),
+      h('div', { class: 'sub' }, '내가 보낸 요청에서만 Claude 가 읽어요(읽기만). 다른 사람 요청은 그 사람 맥에 등록한 폴더를 읽어요'),
       readDirs.length ? readDirs.map((d) => h('div', { class: 'dir-row' }, h('div', { class: 'path' }, d), small('빼기', () => removeDir(d), 'is-danger')))
         : h('div', { class: 'sub' }, '아직 없어요'),
       h('div', { class: 'row' }, small('폴더 추가', addDir))));
@@ -445,10 +445,10 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   function sharedPanel() {
-    panelBody.append(h('div', { class: 'mini-card' },
-      h('div', { class: 'name' }, '내 PC 의 공유 폴더'),
-      h('div', { class: 'sub' }, '서버 파일의 사본이에요. 여기서 고친 내용은 올라가지 않으니, 바꾸려면 Claude 에게 요청해 주세요'),
-      h('div', { class: 'row' }, small('폴더 열기', () => window.rooms.openShared({ roomId }).catch(fail)))));
+    // 아래 목록이 곧 내 맥의 공유 폴더다
+    panelBody.append(h('div', { class: 'shared-head' },
+      h('div', { class: 'sub' }, '내 맥에도 같은 파일이 있어요. 고치고 저장하면 다른 사람에게도 반영돼요'),
+      small('Finder 에서 열기', () => window.rooms.openShared({ roomId }).catch(fail))));
     if (!shared) return void panelBody.append(h('div', { class: 'sub' }, '불러오는 중…'));
     if (!shared.length) return void panelBody.append(h('div', { class: 'sub' }, '아직 공유된 파일이 없어요'));
     let dir = null;
@@ -592,6 +592,10 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
         if (curTab === 'members') renderPanel();
       } else if (m.type === 'local.repos' && m.roomId === roomId) {
         if (curTab === 'repos') refreshRepos();
+      } else if (m.type === 'shared.changed' && m.roomId === roomId) {
+        if (curTab === 'shared') loadShared(); else shared = null;
+      } else if (m.type === 'local.sharedConflict' && m.roomId === roomId) {
+        ctx.toast(`다른 사람이 먼저 고친 파일이 있어서, 내 수정본을 따로 올렸어요: ${m.paths.join(', ')}`);
       } else if (m.type === 'run.approval' && m.roomId === roomId) {
         if (m.state === 'pending') approvals.set(m.requestId, { userName: m.userName, toolName: m.toolName });
         else approvals.delete(m.requestId);

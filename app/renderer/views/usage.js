@@ -8,7 +8,7 @@ import { usageLabel, usageWarn, usageChecked } from '../format.js';
  */
 export function usageBars(usage, { compact = false } = {}) {
   const rows = [['fiveHour', usage?.fiveHour], ['sevenDay', usage?.sevenDay]].filter(([, w]) => w);
-  if (!rows.length) return h('div', { class: 'usage-empty' }, '아직 실행 기록이 없어요');
+  if (!rows.length) return h('div', { class: 'usage-empty' }, '사용량을 아직 읽지 못했어요');
   return h('div', { class: `usage${compact ? ' compact' : ''}` },
     rows.map(([kind, w]) => h('div', { class: 'usage-row' },
       h('div', { class: 'usage-text' }, usageLabel(kind, w)),

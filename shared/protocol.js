@@ -28,6 +28,8 @@ export const MSG = Object.freeze({
   RUN_CANCEL: 'run.cancel',
   MEMBER_STATUS: 'member.status',
   ROOM_SETTINGS: 'room.settings',
+  SHARED_PUT: 'shared.put', // 사람이 직접 고친 공유 파일 올리기
+  SHARED_CHANGED: 'shared.changed', // 공유 파일이 바뀌었다는 알림
 });
 
 const MENTION = /^\s*@claude(?=\s|$)/i;

@@ -106,7 +106,7 @@ export function usageChecked(ms, now = Date.now()) {
 export function memberSummary(st) {
   if (!st) return '아직 연결 정보가 없어요';
   const list = (a) => (a?.length ? a.join(', ') : '없음');
-  return `연결한 레포: ${list(st.repos)} · 함께 읽는 폴더: ${list(st.readDirs)} · Claude 로그인 ${st.claude ? '○' : '×'}`;
+  return `연결한 레포: ${list(st.repos)} · 자기 맥에서 함께 읽는 폴더: ${list(st.readDirs)} · Claude 로그인 ${st.claude ? '○' : '×'}`;
 }
 
 /** 모델 선택 목록(정확한 모델 ID). 새 모델이 나오면 여기만 고친다 */
