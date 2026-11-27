@@ -6,7 +6,7 @@
 
 **Architecture:** `Claude Rooms.app`(SwiftUI)이 `node app/main/core.js` 를 자식으로 띄우고 stdin/stdout 한 줄 JSON 으로 40개 기능·6개 알림을 주고받는다. 맥 기능(폴더 고르기·열기·다시 실행·서버 호스트)은 Swift 가 한다. 서버는 그대로.
 
-**Tech Stack:** Swift 6.4 / SwiftPM(Command Line Tools, Xcode 없음), SwiftUI(macOS 14+), MarkdownUI(gonzalezreal/swift-markdown-ui 2.4+), WKWebView, Node 24(ESM, node:test).
+**Tech Stack:** Swift 6.4 / `swiftc` 직접 빌드(Command Line Tools, Xcode·SwiftPM 없음 — 설계 S4), Swift Testing, SwiftUI(macOS 14+), WKWebView, Node 24(ESM, node:test). 외부 Swift 라이브러리 없음.
 
 **Spec:** `docs/2026-11-27-swift-app-design.md`
 
@@ -15,10 +15,10 @@
 - 서버(`server/`)·웹소켓 프로토콜은 바꾸지 않는다.
 - 코어 기능 이름·인자·결과는 `app/main/preload.cjs` 목록 그대로. 예외는 설계 3장(`pickFolder` 는 Swift, `openFolder`/`openShared` 는 경로 반환).
 - 코어 stdout 은 통신 전용. 로그는 stderr.
-- 최소 macOS 14, 빌드는 `swift build`(Xcode 금지), 번들 ID `dev.claude-rooms.app`, 실행 파일 이름 `ClaudeRooms`, 설치 위치 `~/Applications/Claude Rooms.app`.
+- 최소 macOS 14, 빌드는 `mac/build.sh`·`mac/test.sh`(swiftc, Xcode·SwiftPM 금지), 번들 ID `dev.claude-rooms.app`, 실행 파일 이름 `ClaudeRooms`, 설치 위치 `~/Applications/Claude Rooms.app`.
 - 공개 레포: 회사 이름·사내 주소·계정 정보를 코드·테스트·문서에 넣지 않는다.
 - 화면 문구·색·간격·버튼 크기는 Task 4b 의 UI 점검표(`docs/2026-11-27-ui-review.md`)에서 정한 기준을 따른다. 점검표에 없는 것은 지금 Electron 화면(`app/renderer/**`, `tokens.css`·`app.css`)을 따른다. 글꼴 Pretendard(Regular·Medium·SemiBold·Bold OTF).
-- 단계마다 `npm test`(서버·앱)와 `swift test` 가 통과해야 커밋한다.
+- 단계마다 `npm test`(서버·앱)와 `npm run test:mac` 이 통과해야 커밋한다.
 
 ## Review Focus
 
@@ -105,7 +105,7 @@
 ### Task 4: Swift 패키지·코어 클라이언트·Node 찾기
 
 **Files:**
-- Create: `mac/Package.swift` — 대상 `RoomsKit`(라이브러리, UI 없음), `ClaudeRooms`(실행 파일, RoomsKit·MarkdownUI 의존), `RoomsKitTests`
+- Create: `mac/test.sh`(swiftc 로 RoomsKit 을 `-enable-testing` 라이브러리로, 테스트를 Swift Testing 러너로 빌드·실행), 루트 `package.json` 의 `test:mac`. `Package.swift` 는 두지 않는다(설계 S4)
 - Create: `mac/Sources/RoomsKit/JSON.swift`, `CoreClient.swift`, `LineBuffer.swift`, `RestartPolicy.swift`, `NodeLocator.swift`
 - Test: `mac/Tests/RoomsKitTests/*.swift`, 가짜 코어 `mac/Tests/RoomsKitTests/Fixtures/fake-core.mjs`
 
@@ -129,9 +129,9 @@
   - `CoreClientTests.testExitCallback` — 가짜 코어가 `exit` 처리기로 종료 → `onExit` 호출, 대기 중 call 은 `.notRunning`
   - `RestartPolicyTests` — 60초 안 3번 true, 4번째 false, 61초 뒤 다시 true(Review Focus 4)
   - `NodeLocatorTests` — 셸 결과 우선 / 셸 실패 시 `/opt/homebrew/bin/node` / 둘 다 없으면 `/usr/local/bin/node` / 전부 없으면 nil(Review Focus 3)
-- [ ] **Step 2:** `cd mac && swift test` → 실패 확인
+- [ ] **Step 2:** `npm run test:mac` → 실패 확인
 - [ ] **Step 3:** 구현(`Process` + `Pipe`, 응답 대기는 `[Int: CheckedContinuation]` 를 직렬 큐로 보호)
-- [ ] **Step 4:** `swift test` 통과
+- [ ] **Step 4:** `npm run test:mac` 통과
 - [ ] **Step 5:** 사용자 확인 뒤 커밋 `feat: Swift 패키지와 코어 클라이언트`
 
 ### Task 4b: UI/UX 점검표
@@ -162,15 +162,15 @@
   - `@MainActor @Observable final class AppModel` — `screen: Screen`(`.needNode`, `.login(serverUrl)`, `.rooms`, `.room(id, tab, preview)`), `user`, `claude`, `usage`, `update`, `connected`, `coreDown: Bool`, `toast(_ text: String)`, `func call(_ name: String, _ args: JSON = …) async throws -> JSON`(오류 코드를 `Format.errorText` 로 토스트). 코어 알림을 받아 상태 갱신, `relaunch` 알림 → `MacActions.relaunch()`
   - `MacActions` — `pickFolder() -> String?`(NSOpenPanel 폴더), `open(_ path: String)`, `reveal(_ path: String)`, `openURL(_ url: URL)`(http/https 만), `relaunch()`(자기 번들을 새 인스턴스로 띄우고 종료)
   - `Format`(RoomsKit) — `format.js` 의 `formatTime`, `formatDate`, `usageLabel`, `usageWarn`, `usageChecked`, `modelLabel`, `effortLabel`, `memberSummary`, `personIndex`, `initial`, `errorText`, `failText`, `STATUS_TEXT` 를 같은 결과로. 테스트는 `app/test/format.test.js` 의 기대값을 그대로 옮긴다
-  - `build.sh` — `swift build -c release --package-path mac` → `Claude Rooms.app/Contents/{MacOS/ClaudeRooms, Info.plist, Resources/Fonts/*.otf}` 조립 → `~/Applications` 로 교체. Info.plist: `CFBundleName`=Claude Rooms, `CFBundleIdentifier`=dev.claude-rooms.app, `CFBundleExecutable`=ClaudeRooms, `LSMinimumSystemVersion`=14.0, `RoomsSource`=레포 절대 경로, `RoomsCommit`=짧은 HEAD. 아이콘은 이번 계획에서 제외(기본 아이콘)
+  - `build.sh` — `swiftc -O -swift-version 6 -parse-as-library` 로 `Sources/RoomsKit/*.swift`·`Sources/ClaudeRooms/**/*.swift` 를 한 실행 파일로 → `Claude Rooms.app/Contents/{MacOS/ClaudeRooms, Info.plist, Resources/Fonts/*.otf}` 조립 → `~/Applications` 로 교체. Info.plist: `CFBundleName`=Claude Rooms, `CFBundleIdentifier`=dev.claude-rooms.app, `CFBundleExecutable`=ClaudeRooms, `LSMinimumSystemVersion`=14.0, `RoomsSource`=레포 절대 경로, `RoomsCommit`=짧은 HEAD. 아이콘은 이번 계획에서 제외(기본 아이콘)
   - 캡처: 환경 변수 `ROOMS_SCREENSHOT` 이면 코어에 그대로 넘기고, `capture:shot` 마다 `screen`·다크 모드를 맞추고 0.5초 뒤 창 내용을 PNG(`<폴더>/<name>.png`, 1100×728)로 저장 → `captureAck`. `capture:done` 이면 종료(실패면 코드 1)
     - 앞 장면과 `view`·`opts`·`dark` 가 같으면 화면을 다시 열지 않고 `ui`(codeDiffOpen·scrollTo·composer)만 적용한다(Electron `createShoot` 와 같은 규칙, `capture.js` 맨 위 주석)
     - 승인 대기 알림(`run.approval pending`)은 방 화면이 열리는 중(약 300ms 뒤)에 올 수 있다 → 방 화면이 만들어지기 전에 온 `rooms:event` 도 놓치지 않게 AppModel 이 방별로 받아 두었다가 RoomModel 에 넘긴다(Task 6)
 
 - [ ] **Step 1: 테스트** — `FormatTests`(format.test.js 기대값 그대로)
-- [ ] **Step 2:** `swift test` 실패 확인
+- [ ] **Step 2:** `npm run test:mac` 실패 확인
 - [ ] **Step 3:** 구현. 코어 시작: `RoomsSource` 의 `app/main/core.js`, 환경 = 로그인 셸 PATH + `ROOMS_HOME`(있으면). 코어 종료 시 `RestartPolicy` 로 다시 띄우고, 멈추면 띠 "연결이 끊겼어요 · 로그 ~/.claude-rooms/core.log"
-- [ ] **Step 4:** `swift test` 통과, `npm run mac` 성공, `open ~/Applications/Claude\ Rooms.app` 으로 로그인→방 목록이 실제 서버에 붙는지 확인, `ROOMS_SCREENSHOT=<tmp> ~/Applications/Claude\ Rooms.app/Contents/MacOS/ClaudeRooms` 로 `01-login`·`02-rooms`(·dark) 가 Electron 캡처와 같은 구성인지 눈으로 비교(나머지 장면은 아직 빈 화면이어도 됨)
+- [ ] **Step 4:** `npm run test:mac` 통과, `npm run mac` 성공, `open ~/Applications/Claude\ Rooms.app` 으로 로그인→방 목록이 실제 서버에 붙는지 확인, `ROOMS_SCREENSHOT=<tmp> ~/Applications/Claude\ Rooms.app/Contents/MacOS/ClaudeRooms` 로 `01-login`·`02-rooms`(·dark) 가 Electron 캡처와 같은 구성인지 눈으로 비교(나머지 장면은 아직 빈 화면이어도 됨)
 - [ ] **Step 5:** 사용자 확인 뒤 커밋 `feat: Swift 앱 뼈대·로그인·방 목록`
 
 ### Task 6: 방 화면 — 머리·채팅
@@ -181,7 +181,7 @@
 **Interfaces:**
 - Consumes: 코어 `openRoom`, `retry`, `cancelRequest`, 알림 `rooms:event`(`message.new`/`message.update`/`room.state`/`member.status`/`run.approval`/`room.delete`/`local.repos`/`shared.changed`/`local.sharedConflict`)
 - Produces: `@MainActor @Observable final class RoomModel(roomId: Int, app: AppModel)` — `state`, `messages`, `memberStatus`, `approvals`, `myModel`, `tab`, `func apply(_ event: CoreEvent)`. 메시지→화면 변환 규칙은 `app/renderer/views/room.js` 의 `claudeBlock`·`toolSummary`·사람 배치(모두 오른쪽, 사람마다 `personIndex` 색, 내 메시지 파랑)를 그대로
-- Markdown: MarkdownUI 로 렌더, 원문 HTML 블록은 코드처럼 글자로, 링크는 http(s) 만 `MacActions.openURL`, 이미지는 대체 글자
+- Markdown: `AttributedString(markdown:, options: .init(interpretedSyntax: .full))` 의 `presentationIntent` 로 블록(제목·문단·목록·인용·코드 블록·표·구분선)을 나눠 SwiftUI 로 그린다(설계 5장). `RoomsKit/MarkdownBlocks.swift` 에 `func markdownBlocks(_ text: String) -> [MarkdownBlock]` 를 두고 테스트(`MarkdownBlocksTests` — 제목/목록/코드 블록/표/원문 HTML/링크 스킴)한다. 원문 HTML 블록은 코드처럼 글자로, 링크는 http(s) 만 `MacActions.openURL`, 이미지는 대체 글자
 
 - [ ] **Step 1:** (화면이라 단위 테스트 대신) 캡처 장면 `03-room-chat`·`03b-room-code`·`03c-room-people`(라이트·다크)를 기준으로 삼는다
 - [ ] **Step 2:** 구현(위임 가능: 범위 = 위 파일, 기준 = Electron 캡처와 같은 구성)
@@ -200,7 +200,7 @@
 - 규칙(지금과 같음): 기본 [Claude], `/` 로 시작하면 대상과 무관하게 Claude, [사람]이면 사람끼리만. Enter 보내기, Shift+Enter 줄바꿈, 자동완성 열려 있으면 ↑↓·Enter·Tab·Esc
 
 - [ ] **Step 1: 테스트** — `CompleteTests`(`app/test/` 에 complete 테스트가 있으면 그 기대값, 없으면 `complete.js` 의 각 분기: `@` 멤버/파일, `/` 명령, 단어 중간, 후보 없음)
-- [ ] **Step 2:** 실패 확인 → **Step 3:** 구현 → **Step 4:** `swift test` + 캡처 `09-autocomplete`(·dark)·`09b-autocomplete-mention` + 실제로 `/compact`·스킬·`@파일` 보내기 확인
+- [ ] **Step 2:** 실패 확인 → **Step 3:** 구현 → **Step 4:** `npm run test:mac` + 캡처 `09-autocomplete`(·dark)·`09b-autocomplete-mention` + 실제로 `/compact`·스킬·`@파일` 보내기 확인
 - [ ] **Step 5:** 사용자 확인 뒤 커밋 `feat: Swift 입력창·자동완성`
 
 ### Task 8: 오른쪽 패널 — 레포·공유 파일·멤버
@@ -223,7 +223,7 @@
 
 **Interfaces:**
 - Consumes: 코어 `readShared`, `answerApproval({ id, decision })`, `applyUpdate`, `checkUpdate`, 알림 `approval:ask`/`approval:close`/`update`/`conn:status`
-- PreviewSheet: md → MarkdownUI, html/htm → WKWebView(`javaScriptEnabled=false`, 외부 리소스 막는 콘텐츠 규칙), 그 밖 → 고정폭 텍스트(앞 200KB, 넘으면 "… 앞 200KB 까지만 보여요"). 버튼 [Finder 에서 보기]·[기본 앱으로 열기]/html 이면 [브라우저로 열기]·[닫기]
+- PreviewSheet: md → Task 6 의 마크다운 뷰, html/htm → WKWebView(`javaScriptEnabled=false`, 외부 리소스 막는 콘텐츠 규칙), 그 밖 → 고정폭 텍스트(앞 200KB, 넘으면 "… 앞 200KB 까지만 보여요"). 버튼 [Finder 에서 보기]·[기본 앱으로 열기]/html 이면 [브라우저로 열기]·[닫기]
 - 승인 창은 닫기 금지(지금처럼 응답해야 닫힘), 여러 개면 차례로
 
 - [ ] **Step 1:** 기준 캡처 `05-shared-md`·`06-shared-html`·`08-approval`(·dark)·`10-update`
@@ -267,5 +267,5 @@
 
 - [ ] **Step 1:** Swift 캡처 21장 생성·확인 → docs 교체
 - [ ] **Step 2:** 맥 두 대 확인표(설계 7장)를 하나씩 — 로그인·방·대화 이어 가기·승인 창·중단·worktree diff·공유 파일 직접 수정·사용량·업데이트(Swift 빌드 포함)·서버 호스트 스위치. 결과를 표로 보고
-- [ ] **Step 3:** 사용자 확인 뒤 Electron 삭제, `npm test`·`swift test` 통과
+- [ ] **Step 3:** 사용자 확인 뒤 Electron 삭제, `npm test`·`npm run test:mac` 통과
 - [ ] **Step 4:** 사용자 확인 뒤 커밋 `refactor: Electron 앱 삭제, Swift 앱으로 전환`

@@ -9,7 +9,7 @@
 | S1 | 목적: 진짜 맥 앱처럼(더블클릭·Dock·가볍고 빠른 네이티브 화면). 멤버 맥에 Node 가 있어도 된다 |
 | S2 | 방식: **SwiftUI 화면 + Node 코어**. 지금 `app/main` 로직은 Electron 의존만 떼어 앱이 띄우는 Node 자식 프로세스로 재사용한다. 서버(`server/`)는 바꾸지 않는다 |
 | S3 | 업데이트: 각 맥에 소스(`~/claude-rooms`)를 두고 [업데이트] = `git pull` → (lock 바뀌면) `npm install` → (`mac/` 바뀌면) Swift 빌드·`.app` 교체 → 다시 켜기 |
-| S4 | 빌드는 Xcode 없이 Command Line Tools 의 SwiftPM 으로. 최소 macOS 14 |
+| S4 | (2026-11-27 수정) 빌드는 Xcode·SwiftPM 없이 Command Line Tools 의 `swiftc` 로 직접(`mac/build.sh`·`mac/test.sh`). 외부 Swift 라이브러리는 쓰지 않는다. 최소 macOS 14. 까닭: 이 맥의 CLT 에서 SwiftPM 이 빈 패키지조차 못 빌드하고(PackageDescription dylib·swiftmodule 버전 불일치), 관리자 권한이 없어 재설치할 수 없다. 각자 빌드(S3)에서도 의존이 적은 쪽이 덜 깨진다 |
 | S5 | (2026-11-27 수정) 토스 스타일·Pretendard·다크 모드(시스템 설정)는 유지하되, 옮기면서 **UI/UX 를 전체 점검해 개선**한다 — 너무 긴 설명글, 제각각인 버튼 크기, 떨어지는 가독성, 직관적이지 않은 흐름 등. 점검표와 고칠 방안을 먼저 만들어 확인받고(계획 Task 4b), 그 기준으로 Swift 화면을 만든다 |
 | S6 | Electron 버전은 Swift 앱이 맥 두 대 확인을 통과할 때까지 두고, 통과하면 지운다 |
 
@@ -27,7 +27,7 @@ server/ — 변경 없음
 
 폴더:
 - `app/main/` — Node 코어. `index.js` 의 IPC 처리기(handlers)를 Electron 과 무관한 모듈로 떼고, 진입점을 둘 둔다: `core.js`(stdio, Swift 앱용)와 기존 Electron 진입점(전환 기간에만).
-- `mac/` — Swift 패키지(`Package.swift`, `Sources/ClaudeRooms/…`, `Resources/`), `build.sh`.
+- `mac/` — Swift 소스(`Sources/RoomsKit/…` UI 없는 로직, `Sources/ClaudeRooms/…` 앱), `Resources/`, `build.sh`(앱), `test.sh`(RoomsKit 테스트, Swift Testing).
 - `app/renderer/`, Electron 진입점·`preload.cjs`, `electron` 의존 — 전환 끝에 삭제.
 
 ## 3. Swift ↔ Node 코어 통신
@@ -66,7 +66,7 @@ Dock 에서 켠 앱은 PATH 에 Homebrew 경로가 없다. 앱 시작 때 `$SHEL
 | 띠·알림 | 새 버전 띠, 서버 버전 다름 띠, 연결 끊김 띠, 토스트 |
 | 설정 | [이 맥에서 서버 실행] 스위치(6장) |
 
-- 마크다운: SwiftPM 라이브러리 MarkdownUI(표·코드 블록·목록). 원문 HTML 은 글자로, 링크는 http(s) 만, 이미지는 대체 글자(지금 규칙과 같음).
+- 마크다운: 외부 라이브러리 없이 Apple 기본 `AttributedString(markdown:, options: .init(interpretedSyntax: .full))` 의 블록 정보(`presentationIntent` — 제목·목록·인용·코드 블록·표)로 SwiftUI 뷰를 직접 그린다. 원문 HTML 은 글자로, 링크는 http(s) 만, 이미지는 대체 글자(지금 규칙과 같음).
 - HTML 미리보기: WKWebView, 자바스크립트 끔, 외부 요청 막음. 스크립트가 필요한 아티팩트는 [브라우저로 열기].
 - 글꼴: `node_modules/pretendard/dist/public/static/*.otf`(Regular·Medium·SemiBold·Bold)를 빌드 때 앱에 넣고 CTFontManager 로 등록.
 - 색: 지금 `tokens.css` 의 값을 Swift 색 상수로(라이트·다크 두 벌).
@@ -74,7 +74,7 @@ Dock 에서 켠 앱은 PATH 에 Homebrew 경로가 없다. 앱 시작 때 `$SHEL
 
 ## 6. 빌드·업데이트·서버
 
-- `npm run mac` → `mac/build.sh`: `swift build -c release` → `Claude Rooms.app` 조립(Info.plist 에 이름·번들 ID·소스 폴더 경로·커밋, 아이콘, 글꼴) → `~/Applications/Claude Rooms.app` 으로 교체.
+- `npm run mac` → `mac/build.sh`: `swiftc -O` 로 RoomsKit·앱 소스를 한 실행 파일로 빌드 → `Claude Rooms.app` 조립(Info.plist 에 이름·번들 ID·소스 폴더 경로·커밋, 아이콘, 글꼴) → `~/Applications/Claude Rooms.app` 으로 교체.
 - 업데이트(코어 `updater`): 지금 순서에 한 단계 추가 — `git pull --ff-only` 로 `mac/` 이 바뀌었으면 `npm run mac` 을 돌리고 성공해야 다시 켠다. 빌드 실패면 다시 켜지 않고 "빌드 실패(로그)"를 알린다(지금 버전은 그대로 동작). 소스에 로컬 수정이 있거나 Claude 실행 중이면 지금처럼 멈추거나 기다린다.
 - 서버 호스트: 설정의 [이 맥에서 서버 실행]을 켜면 앱이 `node server/src/supervisor.js` 를 자식으로 띄우고 로그는 `~/.claude-rooms/server.log`. 켜기 전에 4310 포트를 이미 누가 쓰면 켜지 않고 알린다. 앱을 ⌘Q 로 끄면 서버도 꺼진다(스위치 옆에 적음). 설정은 `~/.claude-rooms/config.json` 의 `hostServer`.
 - `npm run host`·`start:raw` 는 남긴다(터미널로 서버만 켜는 경우).
@@ -82,7 +82,7 @@ Dock 에서 켠 앱은 PATH 에 Homebrew 경로가 없다. 앱 시작 때 `$SHEL
 ## 7. 검증
 
 - 코어: 지금 앱 테스트를 그대로 돌린다(Electron 에 묶인 테스트만 코어 기준으로 고침). 통신 계층 테스트 추가 — 요청/응답 짝, 오류 코드, 알림, 잘못된 줄 무시, stdin 닫히면 종료.
-- Swift: 통신 클라이언트(줄 나누기·응답 짝·시간 초과)와 표시 함수(시간·사용량 문구·모델 이름)를 `swift test` 로.
+- Swift: 통신 클라이언트(줄 나누기·응답 짝·시간 초과)와 표시 함수(시간·사용량 문구·모델 이름)를 `npm run test:mac`(`mac/test.sh`, swiftc + Swift Testing) 로.
 - 화면: 캡처 모드로 화면마다 PNG 를 만들어 직접 확인.
 - 맥 두 대: 로그인·방·대화 이어 가기·승인 창·중단·worktree diff·공유 파일 직접 수정·사용량·업데이트(Swift 빌드 포함)·서버 호스트 스위치.
 
