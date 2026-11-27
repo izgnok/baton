@@ -26,9 +26,8 @@ struct AutocompleteView: View {
         }
         .frame(maxWidth: 480)
         .frame(height: Self.height(for: model.items.count))
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bg))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line, lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.bg))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: 1))
     }
 
     private struct Row: View {
@@ -44,12 +43,12 @@ struct AutocompleteView: View {
                 Spacer(minLength: 0)
                 Text(Complete.sourceText[item.source] ?? item.source).typo(.caption).foregroundStyle(Theme.sub)
                     .padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(on ? Theme.bg : Theme.card))
+                    .background(RoundedRectangle(cornerRadius: Theme.radius).fill(on ? Theme.bg : Theme.card))
                     .fixedSize()
             }
             .padding(.horizontal, 10)
             .frame(height: AutocompleteView.rowHeight)
-            .background(RoundedRectangle(cornerRadius: 8).fill(on ? Theme.accentSoft : .clear))
+            .background(RoundedRectangle(cornerRadius: Theme.radius).fill(on ? Theme.accentSoft : .clear))
             .contentShape(Rectangle())
         }
     }

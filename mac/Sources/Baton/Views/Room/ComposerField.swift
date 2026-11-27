@@ -27,9 +27,7 @@ struct ComposerField: NSViewRepresentable {
     private static let padX: CGFloat = 12
 
     private static let font = NSFont(name: Fonts.Weight.regular.psName, size: 15) ?? .systemFont(ofSize: 15)
-    private static let textColor = NSColor(name: nil) { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(hex: 0xECECEF) : NSColor(hex: 0x191F28)
-    }
+    private static let textColor = Theme.nsText
 
     func makeCoordinator() -> Coordinator { Coordinator(model) }
 

@@ -91,8 +91,8 @@ struct Composer: View {
         ComposerField(model: cm)
             .frame(maxWidth: .infinity) // 띄어쓰기 없는 긴 글이 창을 옆으로 밀지 않게
             .frame(height: cm.fieldHeight)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(cm.focused ? Theme.accent : .clear, lineWidth: 2))
+            .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(cm.focused ? Theme.accent : .clear, lineWidth: 2))
             .overlay(alignment: .leading) {
                 if cm.text.isEmpty {
                     Text(cm.placeholder).typo(.body).foregroundStyle(Theme.sub)
@@ -118,15 +118,14 @@ private struct ModeSwitch: View {
                 Button { onPick(m) } label: {
                     Text(label).typo(.captionStrong).foregroundStyle(on ? Theme.text : Theme.sub)
                         .padding(.horizontal, 12).frame(height: 20)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Theme.segOn : .clear)
-                            .shadow(color: .black.opacity(on ? 0.12 : 0), radius: 1, y: 1))
+                        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(on ? Theme.segOn : .clear))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
         .fixedSize()
     }
 }
@@ -151,7 +150,7 @@ struct PickMenu: View {
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.sub)
             }
             .padding(.horizontal, 8).frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
+            .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
             .contentShape(Rectangle())
         }
         .menuStyle(.button)

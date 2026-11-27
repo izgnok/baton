@@ -11,7 +11,7 @@ struct ToastView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.text))
+                .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.text))
                 .frame(maxWidth: 480)
                 .padding(.bottom, 24)
                 .transition(.move(edge: .bottom).combined(with: .opacity))

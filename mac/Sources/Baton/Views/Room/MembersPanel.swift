@@ -99,13 +99,13 @@ struct MembersPanel: View {
         let lines = Format.memberSummaryLines(st)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(Format.initial(m.name)).font(Fonts.font(11, .bold)).foregroundStyle(mine ? .white : Theme.onPerson)
-                    .frame(width: 20, height: 20).background(Circle().fill(mine ? Theme.primary : Theme.personText[idx]))
+                Text(Format.initial(m.name)).font(Fonts.font(11, .bold)).foregroundStyle(mine ? Theme.onMine : Theme.onPerson)
+                    .frame(width: 20, height: 20).background(Circle().fill(mine ? Theme.mine : Theme.personText[idx]))
                 Text(m.name).typo(.uiStrong).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.tail)
                 if m.isOwner {
                     Text("방장").typo(.captionStrong).foregroundStyle(Theme.accentText)
                         .padding(.horizontal, 8).frame(height: 20)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accentSoft))
+                        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accentSoft))
                 }
                 Spacer(minLength: 0)
             }

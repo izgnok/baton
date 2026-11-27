@@ -20,6 +20,19 @@ for w in Regular Medium SemiBold Bold; do
   cp "$FONTS/Pretendard-$w.otf" "$APP/Contents/Resources/Fonts/"
 done
 
+# 아이콘: icon.svg → iconset → AppIcon.icns. 실패해도 빌드는 계속(아이콘 없이)
+ICON_OK=0
+ICONSET="$MAC/.build/AppIcon.iconset"
+rm -rf "$ICONSET"
+if swift "$MAC/scripts/icon.swift" "$MAC/Resources/icon.svg" "$ICONSET" \
+  && iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"; then
+  ICON_OK=1
+else
+  echo "경고: 앱 아이콘 생성 실패 — 아이콘 없이 계속" >&2
+fi
+ICON_KEY=""
+[ "$ICON_OK" = 1 ] && ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon</string>"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,6 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Baton</string>
   <key>CFBundleIdentifier</key><string>dev.baton.app</string>
   <key>CFBundleExecutable</key><string>Baton</string>
+  $ICON_KEY
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>$COMMIT</string>

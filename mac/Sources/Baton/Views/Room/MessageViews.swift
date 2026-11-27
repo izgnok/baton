@@ -2,21 +2,6 @@ import SwiftUI
 
 // MARK: 색·크기
 
-extension Theme {
-    /// 사람별 고정 색 6개: 이름·아바타(글자색 fg) · 말풍선 바탕
-    static let personText: [Color] = [
-        Color(light: 0xB45309, dark: 0xFDBA74), Color(light: 0x15803D, dark: 0x86EFAC), Color(light: 0x0F766E, dark: 0x5EEAD4),
-        Color(light: 0x7C3AED, dark: 0xC4B5FD), Color(light: 0xBE185D, dark: 0xF9A8D4), Color(light: 0xB91C1C, dark: 0xFCA5A5),
-    ]
-    static let personBubble: [Color] = [
-        Color(light: 0xFFF1E0, dark: 0x3A2A1A), Color(light: 0xE3F6E8, dark: 0x1C3326), Color(light: 0xDDF5F2, dark: 0x16332F),
-        Color(light: 0xEEE8FD, dark: 0x2D2547), Color(light: 0xFDE7F1, dark: 0x42223A), Color(light: 0xFDE8E8, dark: 0x43222A),
-    ]
-    static let onPerson = Color(light: 0xFFFFFF, dark: 0x17171C)
-    static let diffAdd = Color(red: 3 / 255, green: 178 / 255, blue: 108 / 255).opacity(0.16)
-    static let diffDel = Color(red: 240 / 255, green: 68 / 255, blue: 82 / 255).opacity(0.16)
-}
-
 /// 내용 폭에 맞추되 limit 를 넘지 않는다(frame(maxWidth:) 는 남는 폭을 다 차지해서 쓸 수 없다)
 struct MaxWidth: Layout {
     var limit: CGFloat
@@ -62,7 +47,7 @@ struct ChatItemView: View {
     }
 }
 
-/// 사람 메시지(모두 오른쪽). 내 것은 강조색, 남의 것은 사람별 색. 같은 사람 연속이면 이름·아바타 생략(CH2)
+/// 사람 메시지. 내 것은 오른쪽 진녹 상자, 남의 것은 왼쪽 카드 상자 + 위에 사람별 이름 색. 같은 사람 연속이면 이름·아바타 생략(CH2)
 struct HumanMessageView: View {
     let model: RoomModel
     let m: ChatMessage
@@ -72,39 +57,71 @@ struct HumanMessageView: View {
 
     private var mine: Bool { m.userId == model.me }
     private var idx: Int { Format.personIndex(m.userId ?? 0) }
-    private var bubbleFill: Color { mine ? Theme.primary : Theme.personBubble[idx] }
-    private var bubbleText: Color { mine ? .white : Theme.text }
-    private var avatarFill: Color { mine ? Theme.primary : Theme.personText[idx] }
-    private var avatarText: Color { mine ? .white : Theme.onPerson }
+    private var avatarFill: Color { mine ? Theme.mine : Theme.personText[idx] }
+    private var avatarText: Color { mine ? Theme.onMine : Theme.onPerson }
 
     var body: some View {
+        if mine { mineBody } else { otherBody }
+    }
+
+    private var time: some View { Text(Format.formatTime(m.createdAt)).typo(.caption).foregroundStyle(Theme.sub) }
+
+    private var bubbleLimit: CGFloat { max(240, chatWidth * 0.78 - 90) }
+
+    private var bubbleText: some View {
+        Text(m.body)
+            .font(Typo.body.font).lineSpacing(5)
+            .foregroundStyle(mine ? Theme.onMine : Theme.text)
+            .textSelection(.enabled)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    private var avatar: some View {
+        Text(Format.initial(m.userName))
+            .font(Fonts.font(14, .bold)).foregroundStyle(avatarText)
+            .frame(width: 32, height: 32).background(Circle().fill(avatarFill))
+            .accessibilityHidden(true)
+    }
+
+    private var mineBody: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            if !mine && !continuing {
-                Text(m.userName ?? "알 수 없음").typo(.uiStrong).foregroundStyle(Theme.personText[idx]).lineLimit(1)
-                    .padding(.trailing, 40)
-            }
             HStack(alignment: .bottom, spacing: 8) {
-                Text(Format.formatTime(m.createdAt)).typo(.caption).foregroundStyle(Theme.sub)
-                MaxWidth(limit: max(240, chatWidth * 0.78 - 90)) {
-                    Text(m.body)
-                        .font(Typo.body.font).lineSpacing(5)
-                        .foregroundStyle(bubbleText)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 16).fill(bubbleFill))
+                time
+                MaxWidth(limit: bubbleLimit) {
+                    bubbleText.background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.mine))
                 }
-                if continuing {
-                    Color.clear.frame(width: 32, height: 1)
-                } else {
-                    Text(Format.initial(m.userName))
-                        .font(Fonts.font(14, .bold)).foregroundStyle(avatarText)
-                        .frame(width: 32, height: 32).background(Circle().fill(avatarFill))
-                        .accessibilityHidden(true)
-                }
+                if continuing { Color.clear.frame(width: 32, height: 1) } else { avatar }
             }
             if isRequest { RequestMeta(model: model, m: m, mine: mine).padding(.trailing, 40) }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var otherBody: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                if continuing { Color.clear.frame(width: 32, height: 1) } else { avatar }
+                VStack(alignment: .leading, spacing: 4) {
+                    if !continuing {
+                        Text(m.userName ?? "알 수 없음").typo(.uiStrong).foregroundStyle(Theme.personText[idx]).lineLimit(1)
+                    }
+                    HStack(alignment: .bottom, spacing: 8) {
+                        MaxWidth(limit: bubbleLimit) { bubbleText.boxed() }
+                        time
+                    }
+                }
+            }
+            if isRequest { RequestMeta(model: model, m: m, mine: mine).padding(.leading, 40) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension View {
+    /// 카드 바탕 + 선 테두리 상자(남의 말·진행 표시·서브에이전트·도구 줄·diff 카드)
+    func boxed() -> some View {
+        background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: 1))
     }
 }
 
@@ -152,7 +169,7 @@ struct StatusBadge: View {
         Text(Format.statusText[status] ?? status)
             .typo(.captionStrong).foregroundStyle(colors.fg)
             .padding(.horizontal, 8).frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 6).fill(colors.bg))
+            .background(RoundedRectangle(cornerRadius: Theme.radius).fill(colors.bg))
     }
 }
 
@@ -170,12 +187,17 @@ struct ClaudeGroupView: View {
         VStack(alignment: .leading, spacing: 8) {
             if !parts.isEmpty || progress != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(modelName.map(Format.modelLabel).flatMap { $0.isEmpty ? nil : "Claude · \($0)" } ?? "Claude")
-                        .typo(.uiStrong).foregroundStyle(Theme.accentText)
+                    HStack(spacing: 6) {
+                        Text("CLAUDE").font(Fonts.font(12, .semibold)).tracking(0.7).foregroundStyle(Theme.primary)
+                        if let label = modelName.map(Format.modelLabel), !label.isEmpty {
+                            Text("· \(label)").typo(.caption).foregroundStyle(Theme.sub)
+                        }
+                    }
                     ForEach(parts, id: \.id) { part in ClaudePartView(model: model, part: part) }
                     if let progress { ProgressLineView(line: progress) }
                 }
-                .padding(.horizontal, 4)
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.primary).frame(width: 2) }
             }
             ForEach(cards) { card in CodeCardView(model: model, card: card) }
         }
@@ -220,7 +242,8 @@ struct ProgressLineView: View {
                 Text((line.detail.isEmpty && line.label.hasSuffix("…") ? "" : "· ") + RunProgress.elapsedText(sec)).fixedSize()
             }
             .typo(.ui).foregroundStyle(Theme.sub)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .boxed()
             .help(tip)
         }
     }
@@ -288,7 +311,7 @@ struct AgentCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+            .boxed()
             .help(head)
             if open && !parts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -341,7 +364,7 @@ struct ToolLineView: View {
                 .frame(maxHeight: 240)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        .boxed()
     }
 
     private static func pretty(_ j: JSON) -> String {
@@ -384,7 +407,7 @@ struct CodeCardView: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card))
+        .boxed()
         .id("card:\(card.id)")
     }
 
@@ -442,7 +465,7 @@ struct DiffView: View {
             }
         }
         .frame(maxHeight: 320)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bg))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.bg))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
     }
 }

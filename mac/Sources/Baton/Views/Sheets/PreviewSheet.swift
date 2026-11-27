@@ -34,9 +34,9 @@ struct PreviewSheet: View {
             }
             bodyView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 8).fill(kind == .html ? Color.clear : Theme.card))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line, lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: Theme.radius).fill(kind == .html ? Color.clear : Theme.card))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: 1))
             HStack(spacing: 8) {
                 Spacer()
                 Button("Finder에서 보기") { Task { await model.openShared(path, reveal: true) } }
@@ -130,9 +130,7 @@ struct MonoTextView: NSViewRepresentable {
             tv.drawsBackground = false
             tv.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             tv.textContainerInset = NSSize(width: 12, height: 12)
-            tv.textColor = NSColor(name: nil) { a in
-                a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(hex: 0xECECEF) : NSColor(hex: 0x191F28)
-            }
+            tv.textColor = Theme.nsText
             tv.string = text
         }
         return scroll

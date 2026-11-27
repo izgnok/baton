@@ -66,7 +66,7 @@ struct RoomView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Button("← 목록") { app.screen = .rooms }.buttonStyle(.text)
-            Text(model.roomName).typo(.heading).foregroundStyle(Theme.text)
+            Text(model.roomName).typo(.roomTitle).foregroundStyle(Theme.text)
                 .lineLimit(1).truncationMode(.tail).help(model.roomName)
             Spacer(minLength: 8)
             if let c = model.context {
@@ -118,7 +118,7 @@ struct RoomView: View {
                     Button { model.tab = key } label: {
                         Text(label).typo(on ? .uiStrong : .ui).foregroundStyle(on ? Theme.text : Theme.sub)
                             .padding(.horizontal, 12).frame(height: 43)
-                            .overlay(alignment: .bottom) { Rectangle().fill(on ? Theme.accent : .clear).frame(height: 2) }
+                            .overlay(alignment: .bottom) { Rectangle().fill(on ? Theme.primary : .clear).frame(height: 2) }
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -132,6 +132,6 @@ struct RoomView: View {
             default: MembersPanel(model: model)
             }
         }
-        .background(Theme.bg)
+        .background(Theme.panel)
     }
 }

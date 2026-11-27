@@ -111,7 +111,7 @@ struct ApprovalSheet: View {
 
     private func inner<C: View>(@ViewBuilder _ c: () -> C) -> some View {
         c().padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bg))
+            .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.bg))
     }
 }
 

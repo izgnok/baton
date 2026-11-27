@@ -82,7 +82,7 @@ struct CodeBlockView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
     }
 }
 

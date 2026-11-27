@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 카드색 바탕: 맥 아이콘 격자(가장자리 여백 100, 모서리 반경 185) -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#FFFDF8" stroke="#DDD5C5" stroke-width="4"/>
+  <!-- 바통: 약 -35° 기울인 둥근 막대 + 아래쪽 끝의 둥근 점 -->
+  <g transform="rotate(-35 512 512)" fill="#2F6F5E">
+    <rect x="392" y="462" width="380" height="100" rx="50"/>
+    <circle cx="312" cy="512" r="56"/>
+  </g>
+</svg>
