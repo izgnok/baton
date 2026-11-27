@@ -191,7 +191,9 @@ export async function startCapture(outDir) {
         }],
       });
       await b.request(MSG.RUN_FINISH, {
-        requestId, transcriptVersion, sessionId: randomUUID(), transcript: '{}\n',
+        requestId, transcriptVersion, sessionId: randomUUID(),
+        // 방 컨텍스트 크기(머리줄)가 보이도록 마지막 답의 사용량을 넣는다
+        transcript: `${JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 3, cache_read_input_tokens: 144500, output_tokens: 352 } } })}\n`,
         sharedChanges: [
           { path: 'memory/INDEX.md', contentBase64: b64('- [결제 타임아웃](timeout.md) — 기본 5초\n') },
           { path: 'outputs/정리.md', contentBase64: b64(MD_SUMMARY) },

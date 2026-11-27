@@ -59,4 +59,15 @@ import Testing
         #expect(Format.statusText["cancelled"] == "중단됨")
         #expect(Format.errorText("NOT_CANCELLABLE") == "이미 끝났거나 중단할 수 없는 요청이에요")
     }
+
+    @Test func contextLabelAndTokens() {
+        #expect(Format.tokenCount(9500) == "9,500")
+        #expect(Format.tokenCount(144_855) == "14.5만")
+        #expect(Format.tokenCount(1_000_000) == "100만")
+        #expect(Format.tokenCount(30_000) == "3만")
+        #expect(Format.contextLabel(tokens: 144_855, model: "claude-opus-5-5") == "컨텍스트 14% · 14.5만/100만")
+        #expect(Format.contextLabel(tokens: 900, model: "claude-sonnet-5-5") == "컨텍스트 1% · 900/100만")
+        #expect(Format.contextLabel(tokens: 0, model: nil) == "컨텍스트 0% · 0/100만")
+        #expect(Format.contextWindow("claude-haiku-4-5") == 200_000)
+    }
 }

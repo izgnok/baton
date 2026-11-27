@@ -168,6 +168,11 @@ final class RoomModel {
     var me: Int? { app.user?["id"]?.int }
     var roomName: String { state?["room"]?["name"]?.string ?? app.roomNames[roomId] ?? "" }
     var memberCount: Int { state?["members"]?.array?.count ?? 0 }
+    /// 방 컨텍스트 크기(서버가 대화 원본 마지막 답으로 계산 — 방 멤버 모두 같은 값). 아직 답이 없으면 nil
+    var context: (tokens: Int, model: String?)? {
+        guard let c = state?["context"], let t = c["tokens"]?.int else { return nil }
+        return (t, c["model"]?.string)
+    }
     /// 나를 뺀 멤버 이름(@ 자동완성)
     var memberNames: [String] {
         (state?["members"]?.array ?? []).filter { $0["userId"]?.int != me }.compactMap { $0["name"]?.string }

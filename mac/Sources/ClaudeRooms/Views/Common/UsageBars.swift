@@ -36,7 +36,7 @@ struct UsageBars: View {
         }
     }
 
-    private struct Bar: View {
+    struct Bar: View {
         let fraction: Double
         let warn: Bool
 

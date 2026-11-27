@@ -51,6 +51,16 @@ struct RoomView: View {
             Text(model.roomName).typo(.heading).foregroundStyle(Theme.text)
                 .lineLimit(1).truncationMode(.tail).help(model.roomName)
             Spacer(minLength: 8)
+            if let c = model.context {
+                let window = Format.contextWindow(c.model)
+                let fraction = Double(c.tokens) / Double(window)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(Format.contextLabel(tokens: c.tokens, model: c.model)).typo(.caption).foregroundStyle(Theme.text).lineLimit(1)
+                    UsageBars.Bar(fraction: fraction, warn: fraction >= 0.8)
+                }
+                .frame(width: 150, alignment: .leading)
+                .help("방 멤버 모두 같은 대화를 이어 써서 같은 값이에요. 많이 차면 /compact 로 줄일 수 있어요")
+            }
             UsageBars(usage: app.usage, compact: true)
             Text("멤버 \(model.memberCount)명").typo(.ui).foregroundStyle(Theme.sub).fixedSize()
         }

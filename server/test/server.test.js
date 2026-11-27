@@ -305,3 +305,23 @@ test('shared.put: 멤버만 올리고, 반영되면 방 멤버에게 shared.chan
   assert.equal((await A.req(MSG.SHARED_PUT, { roomId: room.id, changes: [] })).error, 'INVALID_INPUT');
   await Promise.all([A.close(), B.close(), C.close()]);
 });
+
+test('방 상태에 컨텍스트 크기: 실행이 끝나면 모두에게 같은 값', async () => {
+  const a = await signup('ctx-a');
+  const b = await signup('ctx-b');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '컨텍스트' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+  assert.equal((await B.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.context, null);
+
+  const startP = A.next((m) => m.type === MSG.RUN_START);
+  const msg = await A.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 해 줘' });
+  await timeout(startP);
+  const stateP = B.next((m) => m.type === MSG.ROOM_STATE && m.state.room.id === room.id && m.state.context);
+  const transcript = `${JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 3, cache_read_input_tokens: 120000, output_tokens: 97 } } })}\n`;
+  await A.ok(MSG.RUN_FINISH, { requestId: msg.id, transcriptVersion: 0, sessionId: '11111111-2222-4333-8444-555555555555', transcript, sharedChanges: [] });
+  assert.deepEqual((await timeout(stateP)).state.context, { tokens: 120100, model: 'claude-opus-5-5' });
+  assert.deepEqual((await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.context, { tokens: 120100, model: 'claude-opus-5-5' });
+  await Promise.all([A.close(), B.close()]);
+});

@@ -167,6 +167,26 @@ public enum Format {
     private static let modelLabels = ["opus": "Opus(최신)", "sonnet": "Sonnet(최신)", "haiku": "Haiku(최신)", "fable": "Fable(최신)"]
     private static let effortLabels = ["low": "낮음", "medium": "보통", "high": "높음", "xhigh": "매우 높음", "max": "최대"]
 
+    /// 모델의 컨텍스트 창(토큰). 지금 고를 수 있는 모델은 모두 100만, 모르는 모델도 100만으로 본다
+    public static func contextWindow(_ model: String?) -> Int {
+        model?.hasPrefix("claude-haiku-4") == true ? 200_000 : 1_000_000
+    }
+
+    /// 토큰 수를 짧게: 9,500 / 14.5만 / 100만
+    public static func tokenCount(_ n: Int) -> String {
+        if n < 10_000 { return n.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US"))) }
+        let man = Double(n) / 10_000
+        let s = man >= 100 || man == man.rounded() ? String(Int(man.rounded())) : String(format: "%.1f", man)
+        return "\(s)만"
+    }
+
+    /// 방 컨텍스트: "컨텍스트 15% · 14.5만/100만". 0보다 크면 최소 1%
+    public static func contextLabel(tokens: Int, model: String?) -> String {
+        let window = contextWindow(model)
+        let pct = tokens > 0 ? max(1, Int((Double(tokens) / Double(window) * 100).rounded())) : 0
+        return "컨텍스트 \(pct)% · \(tokenCount(tokens))/\(tokenCount(window))"
+    }
+
     /// 모델 표시 이름. 빈 값은 빈 글자
     public static func modelLabel(_ v: String?) -> String {
         guard let v, !v.isEmpty else { return "" }

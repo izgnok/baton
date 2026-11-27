@@ -3,6 +3,7 @@ import { MSG } from '@rooms/shared/protocol.js';
 import { userByToken } from './auth.js';
 import * as R from './rooms.js';
 import { createQueue } from './queue.js';
+import { contextFromTranscript } from './context.js';
 
 const CODE = /^[A-Z][A-Z0-9_]*$/;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,9 +43,17 @@ export function attachWs(server, { db, files }) {
     broadcast,
   });
 
+  // 방 컨텍스트 크기(대화 원본 마지막 답 기준). 대화 원본을 쓸 때만 다시 계산한다
+  const contexts = new Map(); // roomId → {tokens, model}|null
+  const contextOf = (roomId) => {
+    if (!contexts.has(roomId)) contexts.set(roomId, contextFromTranscript(files.readTranscript(roomId)));
+    return contexts.get(roomId);
+  };
+  const stateOf = (userId, roomId) => ({ ...R.getRoomState(db, userId, roomId), context: contextOf(roomId) });
+
   function broadcastState(roomId) {
     const [first] = memberIds(roomId);
-    if (first !== undefined) broadcast(roomId, { type: MSG.ROOM_STATE, state: R.getRoomState(db, first, roomId) });
+    if (first !== undefined) broadcast(roomId, { type: MSG.ROOM_STATE, state: stateOf(first, roomId) });
   }
 
   // 요청을 보낸 사람 본인만 실행 결과를 올릴 수 있다. 요청의 방 id 를 돌려준다
@@ -66,7 +75,7 @@ export function attachWs(server, { db, files }) {
     [MSG.ROOM_OPEN]: (u, m) => {
       const roomId = Number(m.roomId);
       return {
-        state: R.getRoomState(db, u, roomId),
+        state: stateOf(u, roomId),
         messages: queue.listMessages(u, roomId),
         memberStatus: Object.fromEntries(memberStatus.get(roomId) ?? []),
       };
@@ -98,6 +107,7 @@ export function attachWs(server, { db, files }) {
       const members = memberIds(roomId);
       R.deleteRoom(db, u, roomId);
       memberStatus.delete(roomId);
+      contexts.delete(roomId);
       files.removeRoom(roomId);
       members.forEach((id) => sendUser(id, { type: MSG.ROOM_DELETE, roomId }));
     },
@@ -172,6 +182,8 @@ export function attachWs(server, { db, files }) {
         apply: () => {
           files.applyShared(roomId, changes);
           files.writeTranscript(roomId, m.transcript); // 대화 원본은 마지막에 쓴다
+          contexts.delete(roomId);
+          broadcastState(roomId); // 바뀐 컨텍스트 크기를 모두에게
           if (changes.length) broadcast(roomId, { type: MSG.SHARED_CHANGED, roomId, userId: u });
         },
       });
