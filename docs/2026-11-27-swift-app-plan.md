@@ -263,7 +263,7 @@
 
 **Files:**
 - Delete: `app/renderer/`, `app/main/preload.cjs`, `app/main/index.js`(Electron 껍데기), `app/scripts/vendor.mjs`, `app/package.json` 의 `electron`·`start`·`prestart`, 루트 `host` 스크립트를 `npm run mac` 안내로 교체
-- Modify: `README.md`(설치 = `npm install && npm run mac`, 실행 = Dock/Spotlight, 서버 = 앱 설정 스위치 또는 `npm start -w server`), `docs/2026-11-26-claude-rooms-design.md`(결정 38: 맥 앱 Swift 전환, 설계 문서 링크), `docs/screens-2026-11-26/*.png`(Swift 캡처로 교체)
+- Modify: `README.md`(설치 = `npm install && npm run mac`, 실행 = Dock/Spotlight, 서버 = 앱 설정 스위치 또는 `npm start -w server`), `docs/2026-11-26-claude-rooms-design.md`(결정 39: 맥 앱 Swift 전환, 설계 문서 링크), `docs/screens-2026-11-26/*.png`(Swift 캡처로 교체)
 - Modify: `app/main/capture.js`·Task 3 Electron 쪽 처리 제거
 
 - [ ] **Step 1:** Swift 캡처 21장 생성·확인 → docs 교체

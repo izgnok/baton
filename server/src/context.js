@@ -3,7 +3,7 @@
 
 /**
  * @param {string|null} text 대화 원본
- * @returns {{tokens: number, model: string|null}|null} 마지막 답이 없거나 그 뒤에 압축됐으면 null
+ * @returns {{tokens: number, model: string|null, compacted?: true}|null} 답이 없으면 null, 압축 뒤 아직 답이 없으면 compacted
  */
 export function contextFromTranscript(text) {
   if (!text) return null;
@@ -12,7 +12,7 @@ export function contextFromTranscript(text) {
     if (!lines[i]) continue;
     let e;
     try { e = JSON.parse(lines[i]); } catch { continue; }
-    if (e.type === 'system' && e.subtype === 'compact_boundary') return null; // 압축 뒤 아직 답이 없음
+    if (e.type === 'system' && e.subtype === 'compact_boundary') return { tokens: 0, model: null, compacted: true }; // 압축 뒤 아직 답이 없음
     const u = e.type === 'assistant' ? e.message?.usage : null;
     if (!u) continue;
     const n = (k) => (Number.isFinite(u[k]) ? u[k] : 0);

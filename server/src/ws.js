@@ -176,10 +176,12 @@ export function attachWs(server, { db, files }) {
         || typeof m.transcript !== 'string' || !Array.isArray(changes)
         || !changes.every((c) => c && typeof c.path === 'string'
           && (c.contentBase64 === null || typeof c.contentBase64 === 'string'))) throw bad();
+      const branches = R.checkRunBranches(db, roomId, m.branchChanges ?? []); // Claude 가 옮긴 레포 브랜치(방장이 아니어도 반영)
       return queue.finish(requestId, {
         transcriptVersion: m.transcriptVersion,
         sessionId: m.sessionId,
         apply: () => {
+          R.setRunBranches(db, branches);
           files.applyShared(roomId, changes);
           files.writeTranscript(roomId, m.transcript); // 대화 원본은 마지막에 쓴다
           contexts.delete(roomId);

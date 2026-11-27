@@ -29,3 +29,24 @@ test('안내문: 레포 없음, 보호 브랜치 push 금지, 목록 상한', ()
   assert.ok(sys.includes('git -C ./repos/2-web push origin HEAD:refs/heads/feature/ABC-1'));
   assert.ok(sys.includes('- r99: /home/me/r99') && !sys.includes('- r100:') && sys.includes('(외 20개)'));
 });
+
+test('안내문: 지금 작업 중인 브랜치로 push, 브랜치 이동 안내, 대기 브랜치 표시, 보호 판정은 현재 브랜치 기준', () => {
+  const sys = buildSystemPrompt({
+    requesterName: 'A', memoryIndex: '-',
+    repos: [
+      { name: 'api', branch: 'feature/ABC-1', dir: 'repos/1-api', pendingBranch: 'feature/X' },
+      { name: 'dev', branch: 'develop', dir: 'repos/2-dev' },
+      { name: 'rel', branch: 'feature/ABC-2', dir: 'repos/3-rel', pendingBranch: 'release/9' },
+    ],
+  });
+  assert.ok(sys.includes('git push -u origin <현재 브랜치>') && sys.includes('방이 따라'));
+  // 대기 브랜치: 그 브랜치로 push
+  assert.ok(sys.includes('(지금 브랜치 feature/X, 아직 원격에 없음 — push 하면 모두 따라감)'));
+  assert.ok(sys.includes('git -C ./repos/1-api push -u origin feature/X'));
+  assert.ok(!sys.includes('HEAD:refs/heads/feature/ABC-1'));
+  // 방 브랜치가 보호 브랜치여도 새 브랜치를 만들어 올리는 건 된다
+  assert.ok(sys.includes('dev: 보호 브랜치') && sys.includes('git -C ./repos/2-dev switch -c <새 브랜치>'));
+  assert.ok(!sys.includes('push origin HEAD:refs/heads/develop'));
+  // 대기 브랜치 자체가 보호 브랜치면 push 하지 않는다(방 브랜치는 보호가 아니어도)
+  assert.ok(sys.includes('rel: 지금 브랜치 release/9 는 보호 브랜치') && !sys.includes('push -u origin release/9'));
+});

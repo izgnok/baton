@@ -152,3 +152,23 @@ test('옛 스키마 DB 를 열면 default_model·default_effort 칸이 생기고
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('checkRunBranches·setRunBranches: 이 방 레포만, 이름은 문자열(앞뒤 공백 제거·- 로 시작 금지), 방장 검사 없음', () => {
+  const { db, ids: [a, b] } = setup();
+  const room = R.createRoom(db, a, { name: '방' });
+  const other = R.createRoom(db, a, { name: '다른 방' });
+  R.joinRoom(db, b, { inviteCode: room.inviteCode });
+  const repo = R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'u', branch: 'main' });
+  const foreign = R.addRepo(db, a, other.id, { name: 'x', remoteUrl: 'u', branch: 'main' });
+  const bad = { message: 'INVALID_INPUT' };
+  assert.deepEqual(R.checkRunBranches(db, room.id, []), []);
+  assert.throws(() => R.checkRunBranches(db, room.id, undefined), bad);
+  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: foreign.id, branch: 'b' }]), bad);
+  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: '--upload-pack=x' }]), bad);
+  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: 7 }]), bad);
+  const ok = R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: ' feature/X ' }]);
+  assert.deepEqual(ok, [{ id: repo.id, branch: 'feature/X' }]);
+  R.setRunBranches(db, ok);
+  assert.equal(R.getRoomState(db, b, room.id).repos[0].branch, 'feature/X');
+  assert.equal(R.getRoomState(db, a, other.id).repos[0].branch, 'main');
+});

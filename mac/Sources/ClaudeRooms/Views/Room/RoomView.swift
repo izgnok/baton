@@ -67,6 +67,13 @@ struct RoomView: View {
                 }
                 .frame(width: 150, alignment: .leading)
                 .help("방 멤버 모두 같은 대화를 이어 써서 같은 값이에요. 많이 차면 /compact 로 줄일 수 있어요")
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.contextEmptyText).typo(.caption).foregroundStyle(Theme.sub).lineLimit(1)
+                    UsageBars.Bar(fraction: 0, warn: false)
+                }
+                .frame(width: 150, alignment: .leading)
+                .help("Claude가 이 방에서 답하면 그때부터 컨텍스트 크기가 보여요")
             }
             UsageBars(usage: app.usage, compact: true)
             Text("멤버 \(model.memberCount)명").typo(.ui).foregroundStyle(Theme.sub).fixedSize()

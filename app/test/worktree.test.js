@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   syncWorktree, pendingChanges, listRepoFiles, removeWorktree, isProtectedBranch, worktreePath,
+  currentBranch, scanBranches, deferBranches, detachWorktrees,
 } from '../main/runner/worktree.js';
 
 const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, stdio: 'pipe' }).toString().trim();
@@ -223,4 +224,78 @@ test('removeWorktree: 커밋 안 된 변경은 DIRTY, push 안 된 커밋은 UNP
   const { branch, ...noBranch } = f.args();
   assert.deepEqual(await removeWorktree(noBranch), { removed: false, reason: 'UNPUSHED' });
   assert.equal(fs.existsSync(f.wt), true);
+});
+
+// ---- Claude 가 작업 폴더에서 브랜치를 옮긴 것 따라가기 ----
+
+const treeOf = (f, branch = 'feature/ABC-1') => [{ repo: { id: 1, name: 'r', branch }, wt: f.wt }];
+
+test('scanBranches: detached 면 바뀐 게 없고 대기도 지운다', async () => {
+  const f = fixture('b1');
+  await syncWorktree(f.args());
+  assert.deepEqual(await scanBranches({ trees: treeOf(f), pending: {} }), { changes: [], pending: {}, detach: [] });
+  assert.deepEqual((await scanBranches({ trees: treeOf(f), pending: { 1: 'old' } })).pending, {});
+});
+
+test('scanBranches: 원격에 있는 브랜치로 옮기면 방 브랜치 변경 대상, 작업 폴더는 같은 커밋 detached 로 되돌린다', async () => {
+  const f = fixture('b2');
+  await syncWorktree(f.args());
+  write(f.wt, 'wip.txt', 'w\n'); // 커밋 안 된 수정은 그대로 남아야 한다
+  g(f.wt, 'switch', '-c', 'release/1.0', '--no-track', 'origin/release/1.0');
+  assert.equal(await currentBranch(f.wt), 'release/1.0');
+  const r = await scanBranches({ trees: treeOf(f), pending: { 1: 'feature/gone' } });
+  assert.deepEqual(r, { changes: [{ repoId: 1, repoName: 'r', branch: 'release/1.0', pending: false }], pending: {}, detach: [f.wt] });
+  const head = g(f.wt, 'rev-parse', 'HEAD');
+  await detachWorktrees(r.detach);
+  assert.equal(await currentBranch(f.wt), '');
+  assert.equal(g(f.wt, 'rev-parse', 'HEAD'), head);
+  assert.equal(read(f.wt, 'wip.txt'), 'w\n');
+});
+
+test('scanBranches: 원격에 없는 새 브랜치는 대기(한 번만 알림), push 하면 변경 대상이 되고 대기가 지워진다', async () => {
+  const f = fixture('b3');
+  await syncWorktree(f.args());
+  g(f.wt, 'switch', '-c', 'feature/new');
+  const first = await scanBranches({ trees: treeOf(f), pending: {} });
+  assert.deepEqual(first, { changes: [{ repoId: 1, repoName: 'r', branch: 'feature/new', pending: true }], pending: { 1: 'feature/new' }, detach: [] });
+  assert.equal(await currentBranch(f.wt), 'feature/new'); // 작업 폴더는 그대로
+
+  const again = await scanBranches({ trees: treeOf(f), pending: first.pending });
+  assert.deepEqual(again, { changes: [], pending: { 1: 'feature/new' }, detach: [] });
+
+  g(f.wt, 'push', '-q', 'origin', 'feature/new');
+  const done = await scanBranches({ trees: treeOf(f), pending: first.pending });
+  assert.deepEqual(done, { changes: [{ repoId: 1, repoName: 'r', branch: 'feature/new', pending: false }], pending: {}, detach: [f.wt] });
+});
+
+test('scanBranches: 방 브랜치로 돌아오면 대기를 지우고 detached 로 되돌린다', async () => {
+  const f = fixture('b4');
+  await syncWorktree(f.args());
+  g(f.wt, 'switch', '-c', 'feature/new');
+  const r = await scanBranches({ trees: treeOf(f, 'feature/new'), pending: { 1: 'feature/new' } });
+  assert.deepEqual(r, { changes: [], pending: {}, detach: [f.wt] });
+});
+
+test('deferBranches: 실패한 실행은 옮긴 브랜치를 대기로만 적는다(원격 확인·되돌리기 없음)', async () => {
+  const f = fixture('b5');
+  await syncWorktree(f.args());
+  assert.deepEqual(await deferBranches({ trees: treeOf(f), pending: { 1: 'x' } }), {});
+  g(f.wt, 'switch', '-c', 'release/9', '--no-track', 'origin/release/1.0');
+  assert.deepEqual(await deferBranches({ trees: treeOf(f), pending: {} }), { 1: 'release/9' });
+  assert.equal(await currentBranch(f.wt), 'release/9');
+});
+
+test('syncWorktree: 브랜치에 붙어 있던 작업 폴더는 detached 로 바꾼 뒤 맞춘다(그 브랜치를 다시 쓰지 않는다)', async () => {
+  const f = fixture('b6');
+  await syncWorktree(f.args());
+  g(f.wt, 'switch', '-c', 'feature/new');
+  write(f.wt, 'n.txt', 'n\n');
+  g(f.wt, 'add', '-A');
+  g(f.wt, 'commit', '-qm', 'n');
+  const tip = g(f.wt, 'rev-parse', 'feature/new');
+  otherPush(f, 'c.txt', 'c\n');
+  await syncWorktree(f.args());
+  assert.equal(await currentBranch(f.wt), '');
+  assert.equal(g(f.wt, 'rev-parse', 'feature/new'), tip); // 브랜치는 그대로
+  assert.equal(read(f.wt, 'c.txt'), 'c\n');
 });

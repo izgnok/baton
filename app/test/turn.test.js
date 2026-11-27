@@ -10,7 +10,7 @@ import { MSG } from '@rooms/shared/protocol.js';
 import { runTurn } from '../main/runner/turn.js';
 import { roomDirOf } from '../main/runner/sync.js';
 import { buildPrompt } from '../main/runner/prompt.js';
-import { worktreePath, syncWorktree } from '../main/runner/worktree.js';
+import { worktreePath, syncWorktree, currentBranch } from '../main/runner/worktree.js';
 
 const fx = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const FAKE = path.join(fx, 'fake-claude.mjs');
@@ -72,8 +72,11 @@ function setup({ finishError } = {}) {
   };
   const roomState = { repos: [{ id: repo.id, name: repo.name, remoteUrl: repo.remoteUrl, branch: repo.branch }] };
   const closed = [];
+  const pendingSaved = [];
   return {
-    calls, client, http, runStart, roomState, closed,
+    calls, client, http, runStart, roomState, closed, pendingSaved,
+    pendingBranches: {},
+    onPendingBranches: (p) => pendingSaved.push(p),
     roomRepoPaths: { [repo.id]: repo.local },
     askUser: async () => 'allow',
     closeApproval: (id) => closed.push(id),
@@ -343,4 +346,115 @@ test('onRateLimit 이 던져도 실행은 끝까지 간다', async () => {
   a.onRateLimit = () => { throw new Error('저장 실패'); };
   const { result } = await runDone(a, { FAKE_STREAM: path.join(fx, 'stream-ratelimit.jsonl'), FAKE_TRANSCRIPT: 'x' });
   assert.equal(result.ok, true);
+});
+
+// ---- Claude 가 작업 중 브랜치를 옮기면 방 브랜치가 따라간다 ----
+
+const gitEnv = (...cmds) => ({ FAKE_TRANSCRIPT: 'x', FAKE_REPO_GIT: JSON.stringify(cmds) });
+const branchEvents = (x) => x.calls.filter((c) => c.type === MSG.RUN_EVENT && c.payload.event.type === 'rooms_branch_changes');
+const finishOf = (x) => x.calls.find((c) => c.type === MSG.RUN_FINISH).payload;
+const remoteBranch = (name) => { // 원격에 있는 다른 브랜치(내 원본 폴더도 받아 둔다)
+  g(repo.bare, 'branch', name, 'feature/ABC-9');
+  g(repo.local, 'fetch', '-q', 'origin');
+};
+
+test('원격에 있는 브랜치로 옮기면 branchChanges 에 싣고 작업 폴더는 detached 로 돌아온다', async () => {
+  remoteBranch('feature/other');
+  const a = setup();
+  const { result } = await runDone(a, { ...gitEnv(['switch', '-c', 'feature/other', '--no-track', 'origin/feature/other']), FAKE_REPO_WRITE: 'w.txt' });
+  assert.deepEqual(result, { ok: true });
+
+  const types = a.calls.map((c) => c.type);
+  const ev = branchEvents(a);
+  assert.equal(ev.length, 1);
+  assert.deepEqual(ev[0].payload.event.results, [{ repoId: 1, repoName: 'r', branch: 'feature/other', pending: false }]);
+  assert.ok(a.calls.indexOf(ev[0]) < types.indexOf(MSG.RUN_FINISH));
+  assert.deepEqual(finishOf(a).branchChanges, [{ repoId: 1, branch: 'feature/other' }]);
+  assert.equal(await currentBranch(repo.wt), '');
+  assert.equal(fs.readFileSync(path.join(repo.wt, 'w.txt'), 'utf8'), '고친 코드'); // 고친 파일은 그대로
+  assert.deepEqual(a.pendingSaved, []); // 대기는 없었고 만들어지지도 않았다
+});
+
+test('옮기지 않으면 branchChanges 는 비어 있고 알림도 없다', async () => {
+  const a = setup();
+  await runDone(a, { FAKE_TRANSCRIPT: 'x' });
+  assert.deepEqual(finishOf(a).branchChanges, []);
+  assert.equal(branchEvents(a).length, 0);
+});
+
+test('원격에 없는 새 브랜치: 대기로 저장, 다음 실행 전 동기화는 rebase 하지 않고, push 한 뒤 실행이 끝나면 따라간다', async () => {
+  // 1) 새 브랜치로 옮김 → 대기
+  const a = setup();
+  const r1 = await runDone(a, gitEnv(['switch', '-c', 'feature/new']));
+  assert.equal(r1.result.ok, true);
+  assert.deepEqual(branchEvents(a)[0].payload.event.results, [{ repoId: 1, repoName: 'r', branch: 'feature/new', pending: true }]);
+  assert.deepEqual(finishOf(a).branchChanges, []);
+  assert.deepEqual(a.pendingSaved, [{ 1: 'feature/new' }]);
+  assert.equal(await currentBranch(repo.wt), 'feature/new'); // 이 맥의 작업 폴더는 그 브랜치 그대로
+
+  // 2) 방 브랜치(원격)가 앞서 가도 다음 실행은 rebase 하지 않는다. 안내문에 대기 표시, 알림 반복 없음
+  g(repo.bare, 'update-ref', 'refs/heads/feature/ABC-9', g(repo.bare, 'commit-tree', '-m', 'ahead', '-p', 'feature/ABC-9', 'feature/ABC-9^{tree}'));
+  const head = g(repo.wt, 'rev-parse', 'HEAD');
+  const b = setup();
+  b.pendingBranches = { 1: 'feature/new' };
+  const r2 = await runDone(b, { FAKE_TRANSCRIPT: 'x' });
+  assert.equal(r2.result.ok, true);
+  assert.equal(g(repo.wt, 'rev-parse', 'HEAD'), head);
+  assert.equal(await currentBranch(repo.wt), 'feature/new');
+  assert.ok(argAfter(r2.rec.argv, '--append-system-prompt').includes('지금 브랜치 feature/new, 아직 원격에 없음'));
+  assert.equal(branchEvents(b).length, 0);
+  assert.deepEqual(finishOf(b).branchChanges, []);
+  assert.deepEqual(b.pendingSaved, []); // 바뀐 게 없으면 저장하지 않는다
+
+  // 3) 사람이 push → 다음 실행이 끝날 때 방 브랜치 변경 + 대기 지움 + detached
+  g(repo.wt, 'push', '-q', 'origin', 'feature/new');
+  const c = setup();
+  c.pendingBranches = { 1: 'feature/new' };
+  const r3 = await runDone(c, { FAKE_TRANSCRIPT: 'x' });
+  assert.equal(r3.result.ok, true);
+  assert.deepEqual(finishOf(c).branchChanges, [{ repoId: 1, branch: 'feature/new' }]);
+  assert.deepEqual(branchEvents(c)[0].payload.event.results, [{ repoId: 1, repoName: 'r', branch: 'feature/new', pending: false }]);
+  assert.deepEqual(c.pendingSaved, [{}]);
+  assert.equal(await currentBranch(repo.wt), '');
+});
+
+test('방 브랜치로 돌아오면 대기를 지운다', async () => {
+  const a = setup();
+  await runDone(a, gitEnv(['switch', '-c', 'feature/new']));
+  const b = setup();
+  b.pendingBranches = { 1: 'feature/new' };
+  const { result } = await runDone(b, gitEnv(['switch', '-c', 'feature/ABC-9', '--no-track', 'origin/feature/ABC-9']));
+  assert.equal(result.ok, true);
+  assert.deepEqual(finishOf(b).branchChanges, []);
+  assert.equal(branchEvents(b).length, 0);
+  assert.deepEqual(b.pendingSaved, [{}]);
+  assert.equal(await currentBranch(repo.wt), '');
+});
+
+test('대기 브랜치가 사라진 작업 폴더(detached)면 대기를 무시하고 방 브랜치로 맞춘다', async () => {
+  const a = setup();
+  a.pendingBranches = { 1: 'feature/gone' };
+  const { result } = await runDone(a, { FAKE_TRANSCRIPT: 'x' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(a.pendingSaved, [{}]);
+  assert.equal(g(repo.wt, 'rev-parse', 'HEAD'), g(repo.bare, 'rev-parse', 'feature/ABC-9'));
+});
+
+test('실패한 실행도 옮겨 둔 브랜치를 대기로 적고, 알림·branchChanges 는 보내지 않는다', async () => {
+  remoteBranch('feature/other');
+  const a = setup();
+  const { result } = await runDone(a, { FAKE_STREAM: path.join(fx, 'stream-crash.jsonl'), FAKE_EXIT: '1', FAKE_REPO_GIT: JSON.stringify([['switch', '-c', 'feature/other', '--no-track', 'origin/feature/other']]) });
+  assert.equal(result.ok, false);
+  assert.deepEqual(a.pendingSaved, [{ 1: 'feature/other' }]);
+  assert.equal(branchEvents(a).length, 0);
+  assert.equal(await currentBranch(repo.wt), 'feature/other');
+});
+
+test('RUN_FINISH 가 거절되면 옮겨 둔 브랜치를 대기로 적고 작업 폴더는 그대로 둔다', async () => {
+  remoteBranch('feature/other');
+  const a = setup({ finishError: 'VERSION_MISMATCH' });
+  const { result } = await runDone(a, gitEnv(['switch', '-c', 'feature/other', '--no-track', 'origin/feature/other']));
+  assert.equal(result.error, 'VERSION_MISMATCH');
+  assert.deepEqual(a.pendingSaved, [{ 1: 'feature/other' }]);
+  assert.equal(await currentBranch(repo.wt), 'feature/other');
 });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MSG } from '@rooms/shared/protocol.js';
-import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, roomsHome } from './localConfig.js';
+import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setPendingBranches, roomsHome } from './localConfig.js';
 import { mergeUsage, fetchUsage } from './usage.js';
 import { createUpdater } from './updater.js';
 import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
@@ -16,7 +16,7 @@ import { runTurn } from './runner/turn.js';
 import { roomDirOf } from './runner/sync.js';
 import { createSharedSync } from './sharedSync.js';
 import { safeJoin } from '@rooms/shared/paths.js';
-import { worktreePath, isProtectedBranch, removeWorktree, listRepoFiles } from './runner/worktree.js';
+import { worktreePath, isProtectedBranch, removeWorktree, listRepoFiles, currentBranch } from './runner/worktree.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -83,6 +83,12 @@ export function createService({ emit, relaunch }) {
         http: client.http,
         askUser: (q) => askUser(q, { requestId, roomId }),
         closeApproval,
+        pendingBranches: config.rooms[roomId]?.pendingBranches ?? {},
+        onPendingBranches: (next) => { // 아직 원격에 없는 작업 브랜치는 이 맥에만 기록한다
+          config = setPendingBranches(config, roomId, next);
+          saveConfig(config);
+          toRenderer('rooms:event', { type: 'local.repos', roomId });
+        },
         readDirs: config.rooms[roomId]?.readDirs ?? [],
         repoIndex: config.repoIndex?.repos ?? [],
         ...effectiveModel(config, roomId, state.room), // 개인 선택 → 방 기본 → 내 Claude 설정
@@ -225,12 +231,16 @@ export function createService({ emit, relaunch }) {
     }
     const res = await preflight(state.repos, config.rooms[roomId]?.repos ?? {});
     const indexed = new Set((config.repoIndex?.repos ?? []).map((r) => r.path));
-    res.results = res.results.map((r) => {
+    res.results = await Promise.all(res.results.map(async (r) => {
       const repo = state.repos.find((x) => x.id === r.repoId);
       const wt = worktreePath(roomId, repo);
+      const exists = fs.existsSync(wt);
+      // 이 맥에서만 아직 원격에 없는 브랜치로 작업 중이면 그 이름(작업 폴더가 실제로 거기 붙어 있을 때만)
+      const saved = config.rooms[roomId]?.pendingBranches?.[repo.id];
+      const pendingBranch = saved && exists && await currentBranch(wt) === saved ? saved : null;
       // indexed: 내 PC 레포 목록에 있는 경로(자동 연결 대상)
-      return { ...r, worktreePath: wt, worktreeExists: fs.existsSync(wt), protected: isProtectedBranch(repo.branch), indexed: !!r.localPath && indexed.has(r.localPath) };
-    });
+      return { ...r, worktreePath: wt, worktreeExists: exists, pendingBranch, protected: isProtectedBranch(pendingBranch ?? repo.branch), indexed: !!r.localPath && indexed.has(r.localPath) };
+    }));
     return res;
   }
 

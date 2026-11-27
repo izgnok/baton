@@ -14,7 +14,8 @@ const defaults = () => ({ serverUrl: null, token: null, rooms: {} });
 
 /**
  * 로컬 설정 읽기. 없거나 깨졌으면 기본값
- * @returns {{serverUrl: string|null, token: string|null, rooms: Record<string, {repos: Record<string, string>, readDirs?: string[], model?: string, effort?: string}>,
+ * @returns {{serverUrl: string|null, token: string|null, rooms: Record<string, {repos: Record<string, string>, readDirs?: string[], model?: string, effort?: string,
+ *     pendingBranches?: Record<string, string>}>,
  *   repoIndex?: {scannedAt: number, repos: {path: string, name: string, remoteUrl: string}[]},
  *   usage?: {fiveHour?: object, sevenDay?: object, updatedAt: number}}}
  */
@@ -77,6 +78,13 @@ export function removeReadDir(cfg, roomId, dir) {
 export function setRoomModel(cfg, roomId, model, effort) {
   const room = cfg.rooms[roomId] ?? { repos: {} };
   return { ...cfg, rooms: { ...cfg.rooms, [roomId]: { ...room, repos: room.repos ?? {}, model: model || '', effort: effort || '' } } };
+}
+
+/** 방의 대기 브랜치(레포 id → 아직 원격에 없는 브랜치. 이 맥에서만)를 넣은 새 설정. 비면 키를 지운다 */
+export function setPendingBranches(cfg, roomId, pendingBranches) {
+  const { pendingBranches: _old, ...room } = cfg.rooms[roomId] ?? { repos: {} };
+  const next = Object.keys(pendingBranches).length ? { ...room, pendingBranches } : room;
+  return { ...cfg, rooms: { ...cfg.rooms, [roomId]: next } };
 }
 
 /** 실행 때 쓸 모델·노력: 개인 선택 → 방 기본 → 없음(내 Claude 설정). 각각 따로 정한다 */

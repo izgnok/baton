@@ -24,6 +24,8 @@ struct RepoCheck: Equatable {
     var block: String?
     var indexed: Bool
     var isProtected: Bool
+    /// 이 맥에서만 작업 중인, 아직 원격에 없는 브랜치
+    var pendingBranch: String?
     var worktreePath: String
     var worktreeExists: Bool
 
@@ -32,6 +34,7 @@ struct RepoCheck: Equatable {
         block = j["block"]?.string
         indexed = j["indexed"]?.bool ?? false
         isProtected = j["protected"]?.bool ?? false
+        pendingBranch = j["pendingBranch"]?.string
         worktreePath = j["worktreePath"]?.string ?? ""
         worktreeExists = j["worktreeExists"]?.bool ?? false
     }
@@ -216,7 +219,7 @@ struct ReposPanel: View {
                     Text(st.text).typo(.caption).foregroundStyle(st.ok ? Theme.successText : Theme.dangerText).lineLimit(1)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    LabeledValue(label: "브랜치", value: repo.branch)
+                    LabeledValue(label: "브랜치", value: check.pendingBranch.map { "\($0) (내 맥에서만 · push 전)" } ?? repo.branch)
                     LabeledValue(label: "원격", value: repo.remoteUrl, path: true)
                     if let p = check.localPath { LabeledValue(label: "내 원본", value: p, path: true) }
                     else { LabeledValue(label: "내 원본", value: "내 맥에 없어요", muted: true) }

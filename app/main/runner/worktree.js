@@ -35,6 +35,11 @@ export async function assertBranch(branch) {
   try { await git(['check-ref-format', `refs/heads/${branch}`]); } catch { throw new Error('BAD_BRANCH'); }
 }
 
+/** 작업 폴더가 붙어 있는 브랜치 이름. detached 면 '' */
+export const currentBranch = (wt) => git(['-C', wt, 'symbolic-ref', '-q', '--short', 'HEAD']).catch(() => '');
+
+const detach = (wt) => git(['-C', wt, 'switch', '--detach']);
+
 const fetchBranch = (cwd, branch) =>
   git(['-C', cwd, 'fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], NET);
 
@@ -70,6 +75,8 @@ export async function syncWorktree({ sourcePath, worktreePath: wt, branch }) {
     return { head: await git(['-C', wt, 'rev-parse', '--short', 'HEAD']) };
   }
 
+  // 브랜치에 붙어 있으면(옮겨 둔 채 끝난 실행) 떼어 놓는다. rebase 가 그 브랜치를 다시 쓰지 않게
+  if (await currentBranch(wt)) await detach(wt).catch(() => {});
   const oldHead = await git(['-C', wt, 'rev-parse', 'HEAD']);
   const stashBefore = await git(['-C', wt, 'rev-parse', '-q', '--verify', 'refs/stash']).catch(() => '');
   try {
@@ -88,6 +95,48 @@ export async function syncWorktree({ sourcePath, worktreePath: wt, branch }) {
   }
   return { head: await git(['-C', wt, 'rev-parse', '--short', 'HEAD']) };
 }
+
+/**
+ * 실행이 끝난 뒤 작업 폴더가 붙어 있는 브랜치를 보고 방에 알릴 것·대기·되돌릴 폴더를 정한다(작업 폴더는 바꾸지 않는다)
+ * - detached 이거나 방 브랜치로 돌아왔으면 대기를 지운다(방 브랜치에 붙어 있으면 되돌릴 폴더에 넣는다)
+ * - 다른 브랜치가 origin 에 있으면 방 브랜치 변경 대상(pending: false), 없으면 대기(pending: true, 같은 브랜치는 한 번만 알림)
+ * @param {{trees: {repo: {id: number, name: string, branch: string}, wt: string}[], pending: Record<string, string>}} p
+ * @returns {Promise<{changes: {repoId: number, repoName: string, branch: string, pending: boolean}[], pending: Record<string, string>, detach: string[]}>}
+ */
+export async function scanBranches({ trees, pending }) {
+  const changes = [];
+  const next = { ...pending };
+  const back = [];
+  for (const { repo, wt } of trees) {
+    const b = await currentBranch(wt);
+    if (!b || b === repo.branch) {
+      delete next[repo.id];
+      if (b) back.push(wt);
+    } else if (await git(['-C', wt, 'ls-remote', '--heads', 'origin', `refs/heads/${b}`], NET).then((o) => o !== '', () => false)) {
+      await fetchBranch(wt, b).catch(() => {}); // 앞선 커밋 수를 셀 수 있게
+      changes.push({ repoId: repo.id, repoName: repo.name, branch: b, pending: false });
+      delete next[repo.id];
+      back.push(wt);
+    } else {
+      if (pending[repo.id] !== b) changes.push({ repoId: repo.id, repoName: repo.name, branch: b, pending: true });
+      next[repo.id] = b;
+    }
+  }
+  return { changes, pending: next, detach: back };
+}
+
+/** 실패한 실행 뒤: 옮겨 둔 브랜치를 대기로만 적는다(다음 실행의 동기화가 그 브랜치를 건드리지 않게). 알림·되돌리기는 성공한 실행이 한다 */
+export async function deferBranches({ trees, pending }) {
+  const next = { ...pending };
+  for (const { repo, wt } of trees) {
+    const b = await currentBranch(wt);
+    if (b && b !== repo.branch) next[repo.id] = b; else delete next[repo.id];
+  }
+  return next;
+}
+
+/** 작업 폴더들을 지금 커밋에서 detached 로 되돌린다(고친 파일은 그대로) */
+export const detachWorktrees = (wts) => Promise.all(wts.map((wt) => detach(wt).catch(() => {})));
 
 const DIFF_LIMIT = 60 * 1024;
 

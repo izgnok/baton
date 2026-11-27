@@ -182,6 +182,7 @@ export async function startCapture(outDir) {
       await event(requestId, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'export const PAYMENT_TIMEOUT_MS = 5000;' }] } });
       await event(requestId, tool('t2', 'Bash', { command: 'grep -rn "PAYMENT_TIMEOUT_MS" src/payment | head -20' }));
       await event(requestId, text(MD_DONE));
+      await event(requestId, { type: 'rooms_branch_changes', results: [{ repoId: repo1.id, repoName: 'payment-api', branch: 'feature/ABC-124', pending: true }] });
       await event(requestId, {
         type: 'rooms_code_changes',
         results: [{

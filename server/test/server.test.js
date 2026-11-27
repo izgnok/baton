@@ -325,3 +325,53 @@ test('방 상태에 컨텍스트 크기: 실행이 끝나면 모두에게 같은
   assert.deepEqual((await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.context, { tokens: 120100, model: 'claude-opus-5-5' });
   await Promise.all([A.close(), B.close()]);
 });
+
+test('실행이 끝날 때 branchChanges: 요청자만, 이 방 레포·올바른 이름만, 방장이 아니어도 반영되고 모두에게 방송', async () => {
+  const a = await signup('br-a');
+  const b = await signup('br-b');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '브랜치' });
+  const other = await A.ok(MSG.ROOM_CREATE, { name: '다른 방' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+  const repo = await A.ok(MSG.REPO_ADD, { roomId: room.id, name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'develop' });
+  const foreign = await A.ok(MSG.REPO_ADD, { roomId: other.id, name: 'x', remoteUrl: 'git@h:a/x.git', branch: 'main' });
+
+  const startP = B.next((m) => m.type === MSG.RUN_START);
+  const msg = await B.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 브랜치 옮겨' });
+  await timeout(startP);
+  const sid = '11111111-2222-4333-8444-555555555555';
+  const fin = (who, branchChanges, extra = {}) => who.req(MSG.RUN_FINISH, {
+    requestId: msg.id, transcriptVersion: 0, sessionId: sid, transcript: '', sharedChanges: [], branchChanges, ...extra,
+  });
+  const branchOf = async () => (await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.repos[0].branch;
+
+  // 요청자가 아니면(방장이어도) FORBIDDEN
+  assert.equal((await fin(A, [{ repoId: repo.id, branch: 'feature/X' }])).error, 'FORBIDDEN');
+  // 잘못된 값은 INVALID_INPUT, 아무것도 바뀌지 않고 요청은 계속 실행 중
+  for (const bad of ['x', {}, [{ repoId: foreign.id, branch: 'feature/X' }], [{ repoId: 999, branch: 'feature/X' }],
+    [{ repoId: repo.id, branch: '' }], [{ repoId: repo.id, branch: '-x' }], [{ repoId: repo.id, branch: 5 }], [null],
+    [{ repoId: repo.id, branch: 'ok' }, { repoId: foreign.id, branch: 'no' }]]) {
+    assert.equal((await fin(B, bad)).error, 'INVALID_INPUT', JSON.stringify(bad));
+  }
+  assert.equal(await branchOf(), 'develop');
+
+  // 정상: 방장 아닌 요청자도 바꾸고, 방 전원이 상태를 받는다
+  const aState = A.next((m) => m.type === MSG.ROOM_STATE && m.state.repos[0]?.branch === 'feature/X');
+  const bState = B.next((m) => m.type === MSG.ROOM_STATE && m.state.repos[0]?.branch === 'feature/X');
+  assert.deepEqual(await B.ok(MSG.RUN_FINISH, {
+    requestId: msg.id, transcriptVersion: 0, sessionId: sid, transcript: '', sharedChanges: [], branchChanges: [{ repoId: repo.id, branch: ' feature/X ' }],
+  }), { newVersion: 1 });
+  await timeout(aState);
+  await timeout(bState);
+  assert.equal(await branchOf(), 'feature/X');
+  assert.equal((await A.ok(MSG.ROOM_OPEN, { roomId: other.id })).state.repos[0].branch, 'main'); // 다른 방은 그대로
+
+  // 보내지 않아도(옛 앱) 된다. 화면의 레포 [수정]은 여전히 방장만
+  const start2 = B.next((m) => m.type === MSG.RUN_START);
+  const m2 = await B.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 하나 더' });
+  await timeout(start2);
+  await B.ok(MSG.RUN_FINISH, { requestId: m2.id, transcriptVersion: 1, transcript: '', sharedChanges: [] });
+  assert.equal((await B.req(MSG.REPO_UPDATE, { repoId: repo.id, branch: 'y' })).error, 'FORBIDDEN');
+  await Promise.all([A.close(), B.close()]);
+});

@@ -184,6 +184,12 @@ struct ClaudeGroupView: View {
         case .tool(let key, let name, let input): ToolLineView(model: model, key: key, name: name, input: input)
         case .error(let text): Text(text).typo(.ui).foregroundStyle(Theme.dangerText)
         case .note(let text): Text(text).typo(.ui).foregroundStyle(Theme.sub)
+        case .branch(_, let text):
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
+                Text(text).lineLimit(2).truncationMode(.middle).help(text)
+            }
+            .typo(.caption).foregroundStyle(Theme.sub)
         }
     }
 }

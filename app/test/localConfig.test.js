@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel } from '../main/localConfig.js';
+import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setPendingBranches } from '../main/localConfig.js';
 
 let home;
 beforeEach(() => {
@@ -83,4 +83,15 @@ test('usage 는 저장 후 다시 읽어도 남고, 모양이 틀리면 버린�
   assert.deepEqual(loadConfig().usage, usage);
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ rooms: {}, usage: [1] }));
   assert.equal('usage' in loadConfig(), false);
+});
+
+test('setPendingBranches: 방별 대기 브랜치를 넣고 비면 키를 지운다, 다른 값은 유지, 원본은 그대로', () => {
+  const base = addReadDirs(setRepoPath({ serverUrl: null, token: null, rooms: {} }, 1, 7, '/r'), 1, ['/x']);
+  const a = setPendingBranches(base, 1, { 7: 'feature/X' });
+  assert.deepEqual(a.rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'], pendingBranches: { 7: 'feature/X' } });
+  assert.equal(base.rooms[1].pendingBranches, undefined);
+  saveConfig(a);
+  assert.deepEqual(loadConfig().rooms[1].pendingBranches, { 7: 'feature/X' });
+  assert.deepEqual(setPendingBranches(a, 1, {}).rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'] });
+  assert.deepEqual(setPendingBranches({ rooms: {} }, 4, { 1: 'b' }).rooms[4], { repos: {}, pendingBranches: { 1: 'b' } });
 });

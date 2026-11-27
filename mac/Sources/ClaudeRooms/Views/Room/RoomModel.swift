@@ -9,10 +9,12 @@ enum ClaudePart: Equatable {
     case tool(key: String, name: String, input: JSON)
     case error(String)
     case note(String)
+    /// 레포 브랜치를 옮겼다는 한 줄(rooms_branch_changes)
+    case branch(key: String, text: String)
 
     var id: String {
         switch self {
-        case .text(let k, _), .tool(let k, _, _): k
+        case .text(let k, _), .tool(let k, _, _), .branch(let k, _): k
         case .error(let s): "error:\(s)"
         case .note(let s): "note:\(s)"
         }
@@ -52,6 +54,12 @@ struct ParsedEvent: Equatable {
                     default: break
                     }
                 }
+            }
+        case "rooms_branch_changes":
+            for r in ev["results"]?.array ?? [] {
+                let name = r["repoName"]?.string ?? "", branch = r["branch"]?.string ?? ""
+                let text = "\(name) 브랜치를 \(branch)로 옮겼어요" + (r["pending"]?.bool == true ? " · push 하면 모두 따라가요" : "")
+                parts.append(.branch(key: "\(id):b\(r["repoId"]?.int ?? 0)", text: text))
             }
         case "rooms_code_changes":
             for r in ev["results"]?.array ?? [] {
@@ -171,9 +179,11 @@ final class RoomModel {
     var memberCount: Int { state?["members"]?.array?.count ?? 0 }
     /// 방 컨텍스트 크기(서버가 대화 원본 마지막 답으로 계산 — 방 멤버 모두 같은 값). 아직 답이 없으면 nil
     var context: (tokens: Int, model: String?)? {
-        guard let c = state?["context"], let t = c["tokens"]?.int else { return nil }
+        guard let c = state?["context"], c["compacted"]?.bool != true, let t = c["tokens"]?.int else { return nil }
         return (t, c["model"]?.string)
     }
+    /// 숫자가 없을 때 머리줄 문구: 아직 Claude 답이 없으면 "새 대화", /compact 직후면 "압축됨"
+    var contextEmptyText: String { state?["context"]?["compacted"]?.bool == true ? "컨텍스트 · 압축됨" : "컨텍스트 · 새 대화" }
     /// 나를 뺀 멤버 이름(@ 자동완성)
     var memberNames: [String] {
         (state?["members"]?.array ?? []).filter { $0["userId"]?.int != me }.compactMap { $0["name"]?.string }

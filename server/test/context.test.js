@@ -17,12 +17,12 @@ test('contextFromTranscript: 마지막 답의 input·cache·output 합과 모델
   assert.deepEqual(contextFromTranscript(text), { tokens: 144855, model: 'claude-sonnet-5-5' });
 });
 
-test('contextFromTranscript: 비었거나 답이 없거나 압축 뒤 답이 없으면 null, 깨진 줄은 건너뜀', () => {
+test('contextFromTranscript: 비었거나 답이 없으면 null, 압축 뒤 답이 없으면 compacted, 깨진 줄은 건너뜀', () => {
   assert.equal(contextFromTranscript(null), null);
   assert.equal(contextFromTranscript(''), null);
   assert.equal(contextFromTranscript(line({ type: 'user', message: { content: 'x' } })), null);
   const compacted = [assistant({ input_tokens: 500000 }), line({ type: 'system', subtype: 'compact_boundary' })].join('\n');
-  assert.equal(contextFromTranscript(compacted), null);
+  assert.deepEqual(contextFromTranscript(compacted), { tokens: 0, model: null, compacted: true });
   const afterCompact = [compacted, assistant({ input_tokens: 9000 })].join('\n');
   assert.deepEqual(contextFromTranscript(afterCompact), { tokens: 9000, model: 'claude-opus-5-5' });
   assert.deepEqual(contextFromTranscript(`${assistant({ input_tokens: 7 })}\n{broken`), { tokens: 7, model: 'claude-opus-5-5' });
