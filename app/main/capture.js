@@ -1,4 +1,4 @@
-// 화면 캡처 모드(ROOMS_SCREENSHOT=<폴더>). 임시 서버·가짜 데이터로 "찍을 장면"을 차례로 만들고,
+// 화면 캡처 모드(BATON_SCREENSHOT=<폴더>). 임시 서버·가짜 데이터로 "찍을 장면"을 차례로 만들고,
 // 그리는 일은 밖(shoot)이 맡는다. 장면 = { name, view, opts, dark, ui }
 //   opts: 화면 전환 인자(window.__debug.go 와 같다), dark: 다크로 찍는지
 //   ui: { codeDiffOpen?: boolean, scrollTo?: 'top'|'codeCard', composer?: string } — 같은 화면에서 이어 찍을 때 바뀐 것만 적는다
@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { createServerClient, signup } from './serverClient.js';
 import { saveConfig } from './localConfig.js';
 import { ensureWorktree, worktreePath } from './runner/worktree.js';
@@ -80,7 +80,7 @@ function git(args, cwd) {
 export async function startCapture(outDir) {
   fs.mkdirSync(outDir, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-capture-'));
-  process.env.ROOMS_HOME ||= path.join(tmp, 'home');
+  process.env.BATON_HOME ||= path.join(tmp, 'home');
   // 실제 claude 설정을 읽지 않도록 가짜 claude 를 쓴다
   const fake = path.join(tmp, 'claude');
   fs.writeFileSync(fake, `#!/bin/sh\necho '{"loggedIn":true,"email":"jihwan@example.com","orgName":"예시 팀","subscriptionType":"team"}'\n`, { mode: 0o755 });
@@ -287,7 +287,7 @@ export async function startCapture(outDir) {
       await shoot(sc('03c-room-people', 'room', room03, { codeDiffOpen: false, scrollTo: 'top' })); // 사람별 색이 보이는 맨 위
       emit('approval:ask', {
         id: 'capture', requestId: runningId, roomId, toolName: 'Write',
-        input: { file_path: '/Users/hana/claude-rooms/1/shared/outputs/재시도-정책.md', content: `# 재시도 정책 초안\n\n${'- 실패 시 지수 백오프로 최대 3회 재시도\n'.repeat(60)}` },
+        input: { file_path: '/Users/hana/.baton/1/shared/outputs/재시도-정책.md', content: `# 재시도 정책 초안\n\n${'- 실패 시 지수 백오프로 최대 3회 재시도\n'.repeat(60)}` },
       });
       await shoot(sc('08-approval', 'room', room03));
       emit('approval:close', { requestId: runningId });

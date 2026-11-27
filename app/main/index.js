@@ -43,7 +43,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: !process.env.ROOMS_SCREENSHOT, // 캡처 중 창이 가려져도 그리기를 멈추지 않는다
+      backgroundThrottling: !process.env.BATON_SCREENSHOT, // 캡처 중 창이 가려져도 그리기를 멈추지 않는다
       preload: path.join(here, 'preload.cjs'),
     },
   });
@@ -103,7 +103,7 @@ app.on('window-all-closed', () => app.quit());
 async function main() {
   await fixPath();
 
-  if (process.env.ROOMS_SMOKE) {
+  if (process.env.BATON_SMOKE) {
     const timer = setTimeout(() => { console.log(JSON.stringify({ ok: false, error: 'SMOKE_TIMEOUT' })); app.exit(1); }, 60000);
     const result = await smoke().catch((e) => ({ ok: false, error: e.message }));
     clearTimeout(timer);
@@ -111,15 +111,15 @@ async function main() {
     app.exit(result.ok ? 0 : 1);
     return;
   }
-  // 캡처 모드는 설정을 읽기 전에 임시 ROOMS_HOME 을 잡아야 한다
-  const cap = process.env.ROOMS_SCREENSHOT ? await startCapture(process.env.ROOMS_SCREENSHOT) : null;
+  // 캡처 모드는 설정을 읽기 전에 임시 BATON_HOME 을 잡아야 한다
+  const cap = process.env.BATON_SCREENSHOT ? await startCapture(process.env.BATON_SCREENSHOT) : null;
   for (const [name, fn] of Object.entries(nativeHandlers)) ipcMain.handle(name, (_e, args = {}) => fn(args));
   await service.start({ capture: !!cap });
   createWindow();
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   if (cap) {
     const timer = setTimeout(() => { console.error('CAPTURE_TIMEOUT'); app.exit(1); }, 120000);
-    const ok = await cap.run({ handlers, emit: toRenderer, getClient: service.getClient, shoot: createShoot(process.env.ROOMS_SCREENSHOT) })
+    const ok = await cap.run({ handlers, emit: toRenderer, getClient: service.getClient, shoot: createShoot(process.env.BATON_SCREENSHOT) })
       .then(() => true, (e) => { console.error(e); return false; });
     clearTimeout(timer);
     await cap.cleanup();

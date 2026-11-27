@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeRemote } from '@rooms/shared/remote.js';
-import { roomsHome } from '../localConfig.js';
+import { normalizeRemote } from '@baton/shared/remote.js';
+import { batonHome } from '../localConfig.js';
 
 const run = promisify(execFile);
 
@@ -57,7 +57,7 @@ export function safeDirName(name) {
 
 /** 기본 위치에 지정 브랜치로 clone 하고 경로를 돌려준다 */
 export async function cloneRepo({ remoteUrl, branch, name }) {
-  const dest = path.join(roomsHome(), 'repos', safeDirName(name));
+  const dest = path.join(batonHome(), 'repos', safeDirName(name));
   if (fs.existsSync(dest) && fs.readdirSync(dest).length > 0) throw new Error('DEST_EXISTS');
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   // `--` 뒤에 두어 '-' 로 시작하는 주소가 git 옵션으로 읽히지 않게 한다

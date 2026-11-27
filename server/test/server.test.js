@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import WebSocket from 'ws';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { startServer } from '../src/index.js';
 
 let srv;

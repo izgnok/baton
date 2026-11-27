@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { createRoomTools, defaultLsRemote } from '../main/roomTools.js';
 
 const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, stdio: 'pipe' }).toString().trim();

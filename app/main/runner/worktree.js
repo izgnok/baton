@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
-import { roomsHome } from '../localConfig.js';
+import { batonHome } from '../localConfig.js';
 import { safeDirName } from './preflight.js';
 
 const run = promisify(execFile);
@@ -24,7 +24,7 @@ export const NET = 60000;
 
 /** 방 전용 작업 폴더 경로 */
 export const worktreePath = (roomId, repo) =>
-  path.join(roomsHome(), String(roomId), 'repos', `${repo.id}-${safeDirName(repo.name)}`);
+  path.join(batonHome(), String(roomId), 'repos', `${repo.id}-${safeDirName(repo.name)}`);
 
 export const isProtectedBranch = (branch) => /^(main|master|develop|production)$|^(release|hotfix)\//.test(branch ?? '');
 

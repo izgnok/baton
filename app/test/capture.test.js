@@ -17,8 +17,8 @@ const NAMES = [
 
 test('capture: 21개 장면이 정해진 순서로 오고 capture:done ok:true', { timeout: 90000 }, async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-capture-test-'));
-  const env = { ...process.env, ROOMS_SCREENSHOT: out, ROOMS_NO_BACKGROUND: '1' };
-  delete env.ROOMS_HOME;
+  const env = { ...process.env, BATON_SCREENSHOT: out, BATON_NO_BACKGROUND: '1' };
+  delete env.BATON_HOME;
   const child = spawn(process.execPath, ['main/core.js'], { cwd: appDir, env });
   const scenes = [];
   let done = null;

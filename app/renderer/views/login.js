@@ -47,7 +47,7 @@ export function loginView(root, ctx, { serverUrl, notice } = {}) {
     h('div', { class: 'screen-scroll' },
       h('div', { class: 'col' },
         h('div', { class: 'login-head' },
-          h('h1', { class: 'title' }, 'Claude Rooms'),
+          h('h1', { class: 'title' }, 'Baton'),
           h('span', { class: 'sub' }, '팀원과 같은 방에서 채팅하고, 필요할 때 Claude 에게 함께 일을 맡겨요')),
         field('서버 주소', server), field('이메일', email), field('비밀번호', password), nameField, err)),
     h('div', { class: 'screen-foot' }, h('div', { class: 'col' }, toggle, submit)));

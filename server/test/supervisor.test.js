@@ -151,13 +151,13 @@ test('켜자마자 멈추면 자식을 새로 띄우지 않는다', async () => 
   assert.equal(sup.pid(), undefined);
 });
 
-test('ROOMS_EXIT_WITH_PARENT=1 이면 stdin 이 끊길 때 자식 서버를 끄고 끝난다', async () => {
+test('BATON_EXIT_WITH_PARENT=1 이면 stdin 이 끊길 때 자식 서버를 끄고 끝난다', async () => {
   const { spawn } = await import('node:child_process');
   const sup = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'supervisor.js');
   const p = spawn(process.execPath, [sup], {
     cwd: tmp, stdio: ['pipe', 'ignore', 'ignore'],
     // 실제 서버(index.js)를 임시 포트(0 = 빈 포트)·임시 데이터로 띄운다. 시작 때 업데이트 확인은 하지 않는다
-    env: { ...process.env, ROOMS_EXIT_WITH_PARENT: '1', PORT: '0', DATA_DIR: path.join(tmp, 'exit-data'), SUPERVISOR_INTERVAL_MS: '3600000' },
+    env: { ...process.env, BATON_EXIT_WITH_PARENT: '1', PORT: '0', DATA_DIR: path.join(tmp, 'exit-data'), SUPERVISOR_INTERVAL_MS: '3600000' },
   });
   const exited = new Promise((r) => p.on('exit', r));
   await sleep(500);

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { safeJoin } from '@rooms/shared/paths.js';
-import { listFiles } from '@rooms/shared/manifest.js';
+import { safeJoin } from '@baton/shared/paths.js';
+import { listFiles } from '@baton/shared/manifest.js';
 
 /** 코드 묶음 상한(2GB). createFileStore 의 maxBundle 로 바꿀 수 있다 */
 export const MAX_BUNDLE = 2 * 1024 ** 3;

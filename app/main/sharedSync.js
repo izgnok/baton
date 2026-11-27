@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { pullRoom, collectChanges } from './runner/sync.js';
 
 const SNAP = 'shared-synced.json'; // 마지막으로 서버와 맞춘 내용(path → sha). 직접 고친 파일을 가려내는 기준

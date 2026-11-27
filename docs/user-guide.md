@@ -1,4 +1,4 @@
-# Claude Rooms 사용 가이드
+# Baton 사용 가이드
 
 여러 사람이 한 채팅방에서 **같은 Claude 대화(세션)를 이어 쓰는** 맥 앱입니다.
 Claude 에게 보낸 요청은 **보낸 사람의 맥에서, 그 사람의 Claude 구독으로** 실행되고, 대화·공유 파일은 방 멤버 모두에게 똑같이 보입니다.
@@ -16,20 +16,20 @@ Claude 에게 보낸 요청은 **보낸 사람의 맥에서, 그 사람의 Claud
 ## 2. 설치
 
 ```bash
-git clone https://github.com/izgnok/claude-rooms.git ~/claude-rooms
+git clone https://github.com/izgnok/baton.git ~/baton
 ```
 
 ```bash
-cd ~/claude-rooms && npm install && npm run mac
+cd ~/baton && npm install && npm run mac
 ```
 
-`~/Applications/Claude Rooms.app` 이 만들어집니다. Spotlight 에서 "Claude Rooms" 로 열면 됩니다.
-`~/claude-rooms` 폴더는 앱이 계속 쓰므로 지우지 마세요.
+`~/Applications/Baton.app` 이 만들어집니다. Spotlight 에서 "Baton" 으로 열면 됩니다.
+`~/baton` 폴더는 앱이 계속 쓰므로 지우지 마세요.
 
 ## 3. 가입하고 방에 들어가기
 
 1. 앱을 열고 **서버 주소**를 넣습니다. 방을 연 사람에게 받은 `http://<IP>:4310` 형태의 주소입니다(그 사람 앱의 설정 ⌘, 에 나옴).
-2. **[계정이 없어요? 가입하기]** → 이메일·비밀번호·이름. 이 계정은 Claude Rooms 전용이고 Claude 계정과는 별개입니다.
+2. **[계정이 없어요? 가입하기]** → 이메일·비밀번호·이름. 이 계정은 Baton 전용이고 Claude 계정과는 별개입니다.
 3. 방 목록에서 **[초대 코드로 참가]** → 받은 초대 코드(멤버 탭 맨 위에 있는 6자리)를 넣습니다.
 
 ## 4. 방 화면
@@ -58,7 +58,7 @@ cd ~/claude-rooms && npm install && npm run mac
 
 - **레포는 채팅으로 정합니다**: "insight 로 NMRS-123 하자"처럼 말하면 Claude 가 기준 브랜치(원격에 있는 브랜치)를 묻고 작업 브랜치 이름을 정해 방에 추가합니다(승인 창). 브랜치를 바꿀 때도 말로 합니다. 레포 탭은 보여 주기만 합니다(`기준 → 작업`, 상태 점).
   - 각자 맥에서 같은 레포(원격 주소가 같은 것)를 자동으로 찾아 쓰고, 없으면 자동으로 받습니다.
-  - Claude 는 방 전용 **공유 사본**(`~/.claude-rooms/<방>/repos/…`)에서 일합니다. 누가 시킨 변경이든 끝나면 모든 멤버 맥의 사본에 곧바로 맞춰집니다 — push 없이 이어서 작업. 내 원본 폴더·내 로컬 브랜치는 건드리지 않습니다.
+  - Claude 는 방 전용 **공유 사본**(`~/.baton/<방>/repos/…`)에서 일합니다. 누가 시킨 변경이든 끝나면 모든 멤버 맥의 사본에 곧바로 맞춰집니다 — push 없이 이어서 작업. 내 원본 폴더·내 로컬 브랜치는 건드리지 않습니다.
   - 공유 사본 내용은 원본 레포에 `refs/rooms/<방>/<레포>` 로도 보이므로, 내 브랜치로 가져가려면 `git switch -c 내브랜치 refs/rooms/…` 하거나 Claude 에게 시키면 됩니다.
   - 코드를 고치면 실행 뒤 **diff 카드**가 나옵니다. "push 해줘"라고 하면 작업 단위로 나눠 커밋하고 작업 브랜치로 push 합니다. `main`·`develop`·`release/*` 같은 보호 브랜치에는 push 하지 않습니다.
   - **내 맥에서 함께 읽을 폴더**: 레포 바깥의 설정·메모리(상위 폴더의 CLAUDE.md 등)를 Claude 가 읽게 합니다. 내가 보낸 요청에서만 쓰입니다.
@@ -82,4 +82,5 @@ cd ~/claude-rooms && npm install && npm run mac
 | "Claude 로그인이 필요해요" | 터미널에서 `claude` 로그인(또는 방 목록의 [Claude 로그인]) |
 | "Node 가 필요해요" 화면 | Node 24 설치 후 앱을 다시 켬 |
 | 이전 대화를 이어 가지 못함 | 방 멤버들과 같은 Claude 조직(팀) 계정인지 확인 |
-| 앱 로그 | `~/.claude-rooms/core.log`(앱), `~/.claude-rooms/server.log`(서버 맥) |
+| 업데이트 뒤 앱 이름이 바뀜 | 앱 이름이 Claude Rooms 에서 **Baton** 으로 바뀌었어요. Spotlight 에서 "Baton" 으로 열면 되고, 방·대화·데이터(`~/.claude-rooms` → `~/.baton`)는 그대로 옮겨져요 |
+| 앱 로그 | `~/.baton/core.log`(앱), `~/.baton/server.log`(서버 맥) |

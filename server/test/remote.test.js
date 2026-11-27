@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRemote } from '@rooms/shared/remote.js';
+import { normalizeRemote } from '@baton/shared/remote.js';
 
 test('normalizeRemote: 같은 저장소의 여러 표기는 같은 값', () => {
   for (const u of [

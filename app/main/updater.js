@@ -1,5 +1,5 @@
 // 앱 소스 폴더(git 클론)의 새 커밋 확인과 업데이트
-import * as src from '@rooms/shared/sourceUpdate.js';
+import * as src from '@baton/shared/sourceUpdate.js';
 
 /** 서버가 알린 commit(짧은 해시)과 내 HEAD 가 다르면 true. 어느 쪽이든 모르면 false */
 export const serverMismatch = (head, commit) => !!head && !!commit && !head.startsWith(commit) && !commit.startsWith(head);
@@ -7,7 +7,7 @@ export const serverMismatch = (head, commit) => !!head && !!commit && !head.star
 /**
  * @param {{root: string, isBusy: () => boolean, relaunch: () => void, notify: (state: object) => void,
  *   install?: (root: string) => Promise<any>, build?: (root: string) => Promise<any>, appCommit?: string|null, intervalMs?: number, log?: {warn: Function}}} o
- *   appCommit: 지금 돌고 있는 맥 앱을 빌드한 커밋(Info.plist RoomsCommit). 그 뒤로 mac/ 이 바뀌었으면 다시 빌드가 필요하다
+ *   appCommit: 지금 돌고 있는 맥 앱을 빌드한 커밋(Info.plist BatonCommit). 그 뒤로 mac/ 이 바뀌었으면 다시 빌드가 필요하다
  */
 export function createUpdater({ root, isBusy, relaunch, notify, install = src.npmInstall, build = src.macBuild, appCommit = null, intervalMs = 30 * 60 * 1000, log = console }) {
   let state = { count: 0, subjects: [], serverMismatch: false, rebuild: false };

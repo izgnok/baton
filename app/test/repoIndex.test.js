@@ -29,7 +29,7 @@ before(() => {
   mk('node_modules/pkg');
   mk('work/node_modules/pkg');
   mk('.hidden/repo');
-  mk('.claude-rooms/repos/cloned');
+  mk('.baton/repos/cloned');
   // .git 이 파일인 레포(워크트리)
   fs.mkdirSync(path.join(home, 'wt'));
   fs.writeFileSync(path.join(home, 'wt/.git'), 'gitdir: /somewhere\n');

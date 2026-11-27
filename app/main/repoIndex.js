@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { normalizeRemote } from '@rooms/shared/remote.js';
+import { normalizeRemote } from '@baton/shared/remote.js';
 
 const run = promisify(execFile);
 

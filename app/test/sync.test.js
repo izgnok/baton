@@ -18,7 +18,7 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-sync-'));
   claudeDir = path.join(home, 'claude-config');
   tmps.push(home);
-  process.env.ROOMS_HOME = path.join(home, 'rooms');
+  process.env.BATON_HOME = path.join(home, 'rooms');
   process.env.CLAUDE_CONFIG_DIR = claudeDir;
 });
 
@@ -34,9 +34,9 @@ function fakeHttp({ transcript = null, files = {} } = {}) {
 }
 
 test('encodeProjectDir / roomDirOf', () => {
-  assert.equal(encodeProjectDir('/Users/a/claude-rooms/r1'), '-Users-a-claude-rooms-r1');
+  assert.equal(encodeProjectDir('/Users/a/.baton/r1'), '-Users-a--baton-r1');
   assert.equal(encodeProjectDir('/Users/가/방_1.x'), '-Users-----1-x');
-  assert.equal(roomDirOf(7), path.join(process.env.ROOMS_HOME, '7'));
+  assert.equal(roomDirOf(7), path.join(process.env.BATON_HOME, '7'));
   assert.equal(fs.existsSync(roomDirOf(7)), false);
 });
 

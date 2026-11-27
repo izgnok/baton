@@ -1,5 +1,5 @@
 {
-  "name": "@rooms/shared",
+  "name": "@baton/shared",
   "version": "0.1.0",
   "type": "module",
   "exports": { "./protocol.js": "./protocol.js", "./remote.js": "./remote.js", "./paths.js": "./paths.js", "./manifest.js": "./manifest.js", "./sourceUpdate.js": "./sourceUpdate.js" }

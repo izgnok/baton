@@ -59,7 +59,7 @@ test('mcp.json 은 600, close 후 임시 폴더와 포트가 없어진다', asyn
   assert.equal(fs.statSync(bridge.mcpConfigPath).mode & 0o777, 0o600);
   const cfg = JSON.parse(fs.readFileSync(bridge.mcpConfigPath, 'utf8')).mcpServers.rooms;
   assert.equal(cfg.env.ELECTRON_RUN_AS_NODE, '1');
-  assert.equal(cfg.env.ROOMS_APPROVE_PORT, String(bridge.port));
+  assert.equal(cfg.env.BATON_APPROVE_PORT, String(bridge.port));
   assert.ok(fs.existsSync(cfg.args[0]));
   await bridge.close();
   assert.equal(fs.existsSync(dir), false);
@@ -80,7 +80,7 @@ test('다리가 닫힌 뒤에는 연결 실패 메시지로 deny', async () => {
 
 // ---- 방 도구(/tool) ----
 function secretOf(bridge) {
-  return JSON.parse(fs.readFileSync(bridge.mcpConfigPath, 'utf8')).mcpServers.rooms.env.ROOMS_APPROVE_SECRET;
+  return JSON.parse(fs.readFileSync(bridge.mcpConfigPath, 'utf8')).mcpServers.rooms.env.BATON_APPROVE_SECRET;
 }
 async function tool(bridge, body) {
   const r = await fetch(`http://127.0.0.1:${bridge.port}/tool`, {

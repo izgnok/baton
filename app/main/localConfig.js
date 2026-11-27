@@ -3,12 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-/** 앱 작업 폴더. env ROOMS_HOME 이 우선 */
-export function roomsHome() {
-  return process.env.ROOMS_HOME || path.join(os.homedir(), '.claude-rooms');
+/** 앱 작업 폴더. env BATON_HOME 이 우선 */
+export function batonHome() {
+  return process.env.BATON_HOME || path.join(os.homedir(), '.baton');
 }
 
-const configFile = () => path.join(roomsHome(), 'config.json');
+const configFile = () => path.join(batonHome(), 'config.json');
 
 const defaults = () => ({ serverUrl: null, token: null, rooms: {} });
 

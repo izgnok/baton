@@ -1,5 +1,5 @@
 import { WebSocketServer } from 'ws';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { userByToken } from './auth.js';
 import * as R from './rooms.js';
 import { createQueue } from './queue.js';

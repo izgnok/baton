@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { MSG } from '@rooms/shared/protocol.js';
-import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setCodeApplied, roomsHome } from './localConfig.js';
+import { MSG } from '@baton/shared/protocol.js';
+import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setCodeApplied, batonHome } from './localConfig.js';
 import { mergeUsage, fetchUsage } from './usage.js';
 import { createUpdater } from './updater.js';
 import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
@@ -15,7 +15,7 @@ import { cloneRepo as gitClone, preflight, checkRepo, safeDirName } from './runn
 import { runTurn } from './runner/turn.js';
 import { roomDirOf } from './runner/sync.js';
 import { createSharedSync } from './sharedSync.js';
-import { safeJoin } from '@rooms/shared/paths.js';
+import { safeJoin } from '@baton/shared/paths.js';
 import { worktreePath, removeWorktree, discardWorktree, listRepoFiles } from './runner/worktree.js';
 import { syncRepoCode } from './runner/codeSync.js';
 import { snapshot as stateSnapshot } from './runner/codeState.js';
@@ -288,7 +288,7 @@ export function createService({ emit, relaunch }) {
         localPath = await gitClone({ remoteUrl: repo.remoteUrl, branch: repo.baseBranch, name: repo.name });
       } catch (e) {
         // 다른 방에서 이미 받아 둔 폴더면 그대로 쓴다
-        const dest = path.join(roomsHome(), 'repos', safeDirName(repo.name));
+        const dest = path.join(batonHome(), 'repos', safeDirName(repo.name));
         if (e.message !== 'DEST_EXISTS' || !(await checkRepo({ localPath: dest, remoteUrl: repo.remoteUrl })).ok) {
           cloning.delete(key);
           toRenderer('rooms:event', { type: 'local.repos', roomId });
@@ -307,7 +307,7 @@ export function createService({ emit, relaunch }) {
 
   // 연결 안 됐고 내 PC 레포 목록에도 없는 방 레포는 백그라운드로 받는다(rescanIfMissing 과 같은 조건)
   function cloneMissing(roomId, state) {
-    if (process.env.ROOMS_SCREENSHOT || process.env.ROOMS_NO_BACKGROUND) return;
+    if (process.env.BATON_SCREENSHOT || process.env.BATON_NO_BACKGROUND) return;
     for (const repo of state.repos) {
       const key = `${roomId}:${repo.id}:${repo.remoteUrl}`;
       if (config.rooms[roomId]?.repos?.[repo.id] || matchRepo(config.repoIndex, repo.remoteUrl) || cloneFailed.has(key) || cloneQueued.has(key)) continue;
@@ -354,7 +354,7 @@ export function createService({ emit, relaunch }) {
     return scanning;
   }
 
-  // 방 공유 파일을 내 PC 폴더(~/.claude-rooms/<방>/shared)에 받아 둔다.
+  // 방 공유 파일을 내 PC 폴더(~/.baton/<방>/shared)에 받아 둔다.
   // 이 PC 에서 그 방의 Claude 가 실행 중이면 작업 중인 파일을 덮어쓰지 않게 건너뛴다
   const sharedSync = createSharedSync({
     getClient: () => client,
@@ -378,7 +378,7 @@ export function createService({ emit, relaunch }) {
 
   let usageAt = 0;
   async function refreshUsage() {
-    if (process.env.ROOMS_SCREENSHOT || process.env.ROOMS_NO_BACKGROUND || Date.now() - usageAt < 60000) return;
+    if (process.env.BATON_SCREENSHOT || process.env.BATON_NO_BACKGROUND || Date.now() - usageAt < 60000) return;
     usageAt = Date.now();
     const found = await fetchUsage().catch(() => undefined);
     if (!found) return;
@@ -390,7 +390,7 @@ export function createService({ emit, relaunch }) {
 
   // 연결 안 된 방 레포가 있으면 홈 아래를 다시 찾는다(앱을 켠 뒤 clone 하거나 옮긴 레포). 1분에 한 번까지
   function rescanIfMissing() {
-    if (process.env.ROOMS_SCREENSHOT || process.env.ROOMS_NO_BACKGROUND || scanning || Date.now() - (config.repoIndex?.scannedAt ?? 0) < 60000) return;
+    if (process.env.BATON_SCREENSHOT || process.env.BATON_NO_BACKGROUND || scanning || Date.now() - (config.repoIndex?.scannedAt ?? 0) < 60000) return;
     const missing = [...roomCache].some(([roomId, st]) => st.repos.some((r) => !config.rooms[roomId]?.repos?.[r.id]));
     if (missing) rescan().catch((e) => console.error('레포 찾기 실패', e));
   }
@@ -438,7 +438,7 @@ export function createService({ emit, relaunch }) {
     const target = path.resolve(p);
     const inside = (base) => { const rel = path.relative(path.resolve(base), target); return !rel.startsWith('..') && !path.isAbsolute(rel); };
     const linked = Object.values(config.rooms).flatMap((r) => Object.values(r.repos ?? {})).map((x) => path.resolve(x));
-    if (!inside(roomsHome()) && !linked.includes(target)) return false;
+    if (!inside(batonHome()) && !linked.includes(target)) return false;
     try { return fs.statSync(target).isDirectory(); } catch { return false; }
   }
 
@@ -578,18 +578,18 @@ export function createService({ emit, relaunch }) {
   };
   const wrapped = Object.fromEntries(Object.entries(handlers).map(([name, fn]) => [name, (a = {}) => fn(ids(a))]));
 
-  // 캡처 모드는 설정을 읽기 전에 임시 ROOMS_HOME 을 잡아 둬야 한다(호출 쪽 몫)
+  // 캡처 모드는 설정을 읽기 전에 임시 BATON_HOME 을 잡아 둬야 한다(호출 쪽 몫)
   async function start({ capture = false } = {}) {
     config = loadConfig();
     // 캡처 중에는 실제 소스 폴더를 건드리지 않게 git 이 아닌 임시 폴더를 가리킨다
     updater = createUpdater({
-      root: capture ? process.env.ROOMS_HOME : path.resolve(here, '..', '..'),
+      root: capture ? process.env.BATON_HOME : path.resolve(here, '..', '..'),
       isBusy: () => runs.size > 0,
       relaunch: () => relaunch(),
       notify: (s) => toRenderer('update', s),
-      appCommit: process.env.ROOMS_APP_COMMIT || null, // 맥 앱이 넘겨 준 빌드 커밋
+      appCommit: process.env.BATON_APP_COMMIT || null, // 맥 앱이 넘겨 준 빌드 커밋
     });
-    const background = !capture && !process.env.ROOMS_NO_BACKGROUND; // 테스트 등에서 ROOMS_NO_BACKGROUND=1 이면 바깥을 건드리는 작업을 돌리지 않는다
+    const background = !capture && !process.env.BATON_NO_BACKGROUND; // 테스트 등에서 BATON_NO_BACKGROUND=1 이면 바깥을 건드리는 작업을 돌리지 않는다
     if (background) updater.start();
     connectClient();
     if (background) {

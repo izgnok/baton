@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import WebSocket from 'ws';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 
 // 끝의 / 를 떼고, 스킴이 없으면 http:// 를 붙인다(`10.0.0.5:4310` 처럼 입력해도 되게)
 const trim = (url) => {

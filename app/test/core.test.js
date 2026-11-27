@@ -12,7 +12,7 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 function startCore(home, args = []) {
   const child = spawn(process.execPath, ['main/core.js', ...args], {
     cwd: appDir,
-    env: { ...process.env, ROOMS_HOME: home, ROOMS_NO_BACKGROUND: '1' },
+    env: { ...process.env, BATON_HOME: home, BATON_NO_BACKGROUND: '1' },
   });
   const raw = [];
   const lines = [];

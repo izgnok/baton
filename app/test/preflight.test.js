@@ -11,7 +11,7 @@ const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'use
 let tmp;
 before(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-pre-'));
-  process.env.ROOMS_HOME = path.join(tmp, 'home');
+  process.env.BATON_HOME = path.join(tmp, 'home');
 });
 
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -70,13 +70,13 @@ test('브랜치가 달라도, 커밋 안 된 변경이 있어도, 원격이 앞�
 test('cloneRepo 는 지정 브랜치로 체크아웃, 같은 이름은 DEST_EXISTS', async () => {
   const f = fixture('clone');
   const dest = await cloneRepo({ remoteUrl: f.bare, branch: 'develop', name: 'my repo' });
-  assert.equal(dest, path.join(process.env.ROOMS_HOME, 'repos', 'my_repo'));
+  assert.equal(dest, path.join(process.env.BATON_HOME, 'repos', 'my_repo'));
   assert.equal(g(dest, 'branch', '--show-current').trim(), 'develop');
   await assert.rejects(cloneRepo({ remoteUrl: f.bare, branch: 'develop', name: 'my repo' }), { message: 'DEST_EXISTS' });
 });
 
 test('cloneRepo: - 로 시작하는 주소는 git 옵션으로 실행되지 않는다', async () => {
-  const marker = path.join(process.env.ROOMS_HOME, 'pwned');
+  const marker = path.join(process.env.BATON_HOME, 'pwned');
   await assert.rejects(cloneRepo({
     remoteUrl: `--upload-pack=touch ${marker}`, branch: 'develop', name: 'evil',
   }));

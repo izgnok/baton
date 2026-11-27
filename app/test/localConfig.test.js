@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setCodeApplied } from '../main/localConfig.js';
+import { batonHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setCodeApplied } from '../main/localConfig.js';
 
 let home;
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-home-'));
   homes.push(home);
-  process.env.ROOMS_HOME = home;
+  process.env.BATON_HOME = home;
 });
 
 const homes = [];
 after(() => homes.forEach((h) => fs.rmSync(h, { recursive: true, force: true })));
 
-test('roomsHome 은 ROOMS_HOME 을 따른다', () => {
-  assert.equal(roomsHome(), home);
+test('batonHome 은 BATON_HOME 을 따른다', () => {
+  assert.equal(batonHome(), home);
 });
 
 test('파일이 없으면 기본값', () => {

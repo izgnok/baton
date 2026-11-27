@@ -1,4 +1,4 @@
-import { MSG, parseClaudeMention } from '@rooms/shared/protocol.js';
+import { MSG, parseClaudeMention } from '@baton/shared/protocol.js';
 import { isMember } from './rooms.js';
 
 const HEARTBEAT_TIMEOUT_MS = 30000;

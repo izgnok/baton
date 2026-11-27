@@ -4,8 +4,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { gitRead, loadAllowedRepos } from './gitRead.js';
 
-const port = process.env.ROOMS_APPROVE_PORT;
-const secret = process.env.ROOMS_APPROVE_SECRET ?? '';
+const port = process.env.BATON_APPROVE_PORT;
+const secret = process.env.BATON_APPROVE_SECRET ?? '';
 
 const deny = (message) => ({ behavior: 'deny', message });
 
@@ -43,7 +43,7 @@ server.registerTool(
   },
   async ({ repo, args }) => {
     try {
-      const text = await gitRead({ repo, args, allowed: loadAllowedRepos(process.env.ROOMS_READ_REPOS) });
+      const text = await gitRead({ repo, args, allowed: loadAllowedRepos(process.env.BATON_READ_REPOS) });
       return { content: [{ type: 'text', text: text || '(출력 없음)' }] };
     } catch (e) {
       return { isError: true, content: [{ type: 'text', text: e.message }] };

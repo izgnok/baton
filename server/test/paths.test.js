@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { safeJoin } from '@rooms/shared/paths.js';
+import { safeJoin } from '@baton/shared/paths.js';
 
 const base = path.resolve('/tmp/base');
 const bad = { message: 'BAD_PATH' };

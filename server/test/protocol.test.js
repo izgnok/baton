@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, parseClaudeMention } from '@rooms/shared/protocol.js';
+import { MSG, parseClaudeMention } from '@baton/shared/protocol.js';
 
 test('parseClaudeMention', () => {
   const cases = [

@@ -6,10 +6,10 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../../server/src/index.js';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { createServerClient, signup as httpSignup } from '../main/serverClient.js';
 
-// 서버 1대 + 맥 여러 대(코어 프로세스, 각자 ROOMS_HOME·가짜 claude)로 공유 사본 흐름을 끝까지 돌려 본다
+// 서버 1대 + 맥 여러 대(코어 프로세스, 각자 BATON_HOME·가짜 claude)로 공유 사본 흐름을 끝까지 돌려 본다
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fx = path.join(appDir, 'test', 'fixtures');
 const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, stdio: 'pipe' }).toString().trim();
@@ -65,7 +65,7 @@ function mac(label, seqFiles, extraEnv = {}, localRepos = []) {
   const child = spawn(process.execPath, ['main/core.js'], {
     cwd: appDir,
     env: {
-      ...process.env, ROOMS_HOME: home, ROOMS_NO_BACKGROUND: '1', CLAUDE_CONFIG_DIR: path.join(tmp, `${label}-claude`),
+      ...process.env, BATON_HOME: home, BATON_NO_BACKGROUND: '1', CLAUDE_CONFIG_DIR: path.join(tmp, `${label}-claude`),
       CLAUDE_BIN: path.join(fx, 'fake-claude.mjs'), FAKE_STREAM: path.join(fx, 'stream-ok.jsonl'), FAKE_TRANSCRIPT: 'x',
       FAKE_REPO_WRITE_SEQ: JSON.stringify(seqFiles), FAKE_SEQ_FILE: path.join(tmp, `${label}-seq`), ...extraEnv,
     },

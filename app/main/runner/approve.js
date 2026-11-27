@@ -75,8 +75,8 @@ export async function startApprovalBridge({ askUser, timeoutMs = 600000, readRep
         command: process.execPath,
         args: [MCP_SCRIPT],
         env: {
-          ELECTRON_RUN_AS_NODE: '1', ROOMS_APPROVE_PORT: String(port), ROOMS_APPROVE_SECRET: secret,
-          ROOMS_READ_REPOS: JSON.stringify(readRepos), // git_read 가 읽을 수 있는 저장소
+          ELECTRON_RUN_AS_NODE: '1', BATON_APPROVE_PORT: String(port), BATON_APPROVE_SECRET: secret,
+          BATON_READ_REPOS: JSON.stringify(readRepos), // git_read 가 읽을 수 있는 저장소
         },
       },
     },

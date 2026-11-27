@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { MSG } from '@rooms/shared/protocol.js';
+import { MSG } from '@baton/shared/protocol.js';
 import { runTurn } from '../main/runner/turn.js';
 import { roomDirOf, transcriptPath } from '../main/runner/sync.js';
 import { buildPrompt } from '../main/runner/prompt.js';
@@ -31,7 +31,7 @@ let store;
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-turn-'));
   tmps.push(tmp);
-  process.env.ROOMS_HOME = path.join(tmp, 'home');
+  process.env.BATON_HOME = path.join(tmp, 'home');
   process.env.CLAUDE_CONFIG_DIR = path.join(tmp, 'claude-config');
   const bare = path.join(tmp, 'r.git');
   const seed = path.join(tmp, 'seed');
@@ -291,7 +291,7 @@ test('안내문·allowedTools·addDirs·env: 함께 읽는 폴더와 내 PC 레�
   assert.ok(sys.includes('이 PC 기준') && sys.includes('원본 폴더에서 checkout·switch 금지') && !sys.includes('gone'));
 
   // 승인 다리의 git_read 허용 저장소: 내 PC 레포, 방 작업 폴더, 원본. git 레포가 아닌 함께 읽는 폴더는 빠진다
-  const readRepos = JSON.parse(rec.mcp.mcpServers.rooms.env.ROOMS_READ_REPOS);
+  const readRepos = JSON.parse(rec.mcp.mcpServers.rooms.env.BATON_READ_REPOS);
   assert.deepEqual(readRepos.sort(), [idxRepo, repo.wt, repo.local].sort());
 });
 

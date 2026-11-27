@@ -13,7 +13,7 @@ const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'use
 let tmp;
 before(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-wt-'));
-  process.env.ROOMS_HOME = path.join(tmp, 'home');
+  process.env.BATON_HOME = path.join(tmp, 'home');
 });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
@@ -57,7 +57,7 @@ function otherPush(f, file, text, branch = 'feature/ABC-1') {
 }
 
 test('worktreePath, isProtectedBranch', () => {
-  assert.equal(worktreePath(5, { id: 2, name: 'my repo' }), path.join(process.env.ROOMS_HOME, '5', 'repos', '2-my_repo'));
+  assert.equal(worktreePath(5, { id: 2, name: 'my repo' }), path.join(process.env.BATON_HOME, '5', 'repos', '2-my_repo'));
   for (const b of ['main', 'master', 'develop', 'production', 'release/1.0', 'hotfix/x']) assert.equal(isProtectedBranch(b), true, b);
   for (const b of ['feature/ABC-1', 'mainline', 'releases', 'my-develop']) assert.equal(isProtectedBranch(b), false, b);
 });

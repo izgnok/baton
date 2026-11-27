@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { safeJoin } from '@rooms/shared/paths.js';
-import { listFiles } from '@rooms/shared/manifest.js';
-import { roomsHome } from '../localConfig.js';
+import { safeJoin } from '@baton/shared/paths.js';
+import { listFiles } from '@baton/shared/manifest.js';
+import { batonHome } from '../localConfig.js';
 
 const claudeHome = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -36,7 +36,7 @@ export function transcriptPath({ cwd, sessionId, claudeConfigDir = claudeHome() 
 
 /** 방 작업 폴더 경로(만들지 않는다) */
 export function roomDirOf(roomId) {
-  return path.join(roomsHome(), String(roomId));
+  return path.join(batonHome(), String(roomId));
 }
 
 /**
