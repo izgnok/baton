@@ -9,6 +9,7 @@
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "host": "npm start -w app & npm start -w server",
-    "test:mac": "bash mac/test.sh"
+    "test:mac": "bash mac/test.sh",
+    "mac": "bash mac/build.sh"
   }
 }

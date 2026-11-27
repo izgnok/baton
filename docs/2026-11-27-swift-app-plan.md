@@ -16,6 +16,7 @@
 - 코어 기능 이름·인자·결과는 `app/main/preload.cjs` 목록 그대로. 예외는 설계 3장(`pickFolder` 는 Swift, `openFolder`/`openShared` 는 경로 반환).
 - 코어 stdout 은 통신 전용. 로그는 stderr.
 - 최소 macOS 14, 빌드는 `mac/build.sh`·`mac/test.sh`(swiftc, Xcode·SwiftPM 금지), 번들 ID `dev.claude-rooms.app`, 실행 파일 이름 `ClaudeRooms`, 설치 위치 `~/Applications/Claude Rooms.app`.
+- 이 맥의 CLT 에는 SwiftUI 매크로 플러그인(SwiftUIMacros)이 없어 `@State` 가 컴파일되지 않는다 → `Theme.swift` 의 `typealias Local<V> = State<V>` 로 `@Local` 을 쓴다(`@Observable`·`@FocusState` 는 됨)
 - 공개 레포: 회사 이름·사내 주소·계정 정보를 코드·테스트·문서에 넣지 않는다.
 - 화면 문구·색·간격·버튼 크기는 Task 4b 의 UI 점검표(`docs/2026-11-27-ui-review.md`)에서 정한 기준을 따른다. 점검표에 없는 것은 지금 Electron 화면(`app/renderer/**`, `tokens.css`·`app.css`)을 따른다. 글꼴 Pretendard(Regular·Medium·SemiBold·Bold OTF).
 - 단계마다 `npm test`(서버·앱)와 `npm run test:mac` 이 통과해야 커밋한다.
