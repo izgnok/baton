@@ -125,7 +125,7 @@ struct ScrollRequest: Equatable {
 @MainActor @Observable
 final class RoomModel {
     let roomId: Int
-    @ObservationIgnored private unowned let app: AppModel
+    @ObservationIgnored unowned let app: AppModel
 
     var state: JSON?
     var messages: [ChatMessage] = []
@@ -140,18 +140,27 @@ final class RoomModel {
     var openTools: Set<String> = []
     var openDiffs: Set<String> = []
     var scrollRequest: ScrollRequest?
+    /// 공유 파일 경로 목록(공유 파일 탭)
+    var shared: [String]?
+    /// 미리보기로 열 공유 파일 경로(보여 주는 시트는 다음 단계)
+    var preview: String?
+    /// 내가 나가거나 지운 방의 삭제 알림은 따로 안내하지 않는다
+    @ObservationIgnored var leaving = false
 
     @ObservationIgnored private var loading = false
     @ObservationIgnored private var buffer: [CoreEvent] = []
     @ObservationIgnored private var scrollSerial = 0
     /// 입력창 상태(글·대상·자동완성). init 끝에서 만든다
     @ObservationIgnored private(set) var composer: ComposerModel!
+    /// 레포 탭 상태
+    @ObservationIgnored private(set) var repos: ReposModel!
 
     init(roomId: Int, app: AppModel, tab: String = "repos") {
         self.roomId = roomId
         self.app = app
         self.tab = tab
         composer = ComposerModel(room: self, app: app)
+        repos = ReposModel(room: self)
     }
 
     // MARK: 파생 값
@@ -231,20 +240,27 @@ final class RoomModel {
             guard let json = p["message"], let m = ChatMessage(json), json["roomId"]?.int == roomId else { return }
             if buffered, let old = messages.first(where: { $0.id == m.id }), Self.rank(m.status) < Self.rank(old.status) { return }
             upsert(m)
-            if m.kind == "claude_request", m.status == "done" { composer.invalidateShared() } // Claude 가 만든 파일이 공유 목록에 생겼을 수 있다
+            if m.kind == "claude_request", m.status == "done" { sharedChanged() } // Claude 가 만든 파일이 공유 목록에 생겼을 수 있다
         case "shared.changed":
-            if p["roomId"]?.int == roomId { composer.invalidateShared() }
+            if p["roomId"]?.int == roomId { sharedChanged() }
+        case "local.repos":
+            if p["roomId"]?.int == roomId, tab == "repos" { Task { await repos.refresh() } }
+        case "local.sharedConflict":
+            if p["roomId"]?.int == roomId { app.toast(PanelText.conflictToast(count: p["paths"]?.array?.count ?? 0)) }
         case "room.state":
-            if p["state"]?["room"]?["id"]?.int == roomId { state = p["state"] }
+            if p["state"]?["room"]?["id"]?.int == roomId {
+                state = p["state"]
+                if tab == "repos" { Task { await repos.refresh() } }
+            }
         case "room.delete":
-            if p["roomId"]?.int == roomId {
+            if p["roomId"]?.int == roomId, !leaving {
                 app.toast("방이 삭제됐어요")
                 app.screen = .rooms
             }
         case "member.status":
             if p["roomId"]?.int == roomId, let uid = p["userId"]?.int { memberStatus[uid] = Self.memberStatus(p["status"]) }
         default:
-            break // local.repos·local.sharedConflict 는 오른쪽 패널(다음 단계)에서
+            break
         }
         if !buffered { rebuild() }
     }
@@ -267,6 +283,26 @@ final class RoomModel {
     private func upsert(_ m: ChatMessage) {
         if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m }
         else { messages.append(m); messages.sort { $0.id < $1.id } }
+    }
+
+    // MARK: 공유 파일
+
+    private func sharedChanged() {
+        composer.invalidateShared()
+        if tab == "shared" { Task { await loadShared() } } else { shared = nil }
+    }
+
+    func loadShared() async {
+        guard let j = try? await app.call("listShared", .object(["roomId": .number(Double(roomId))])) else { return }
+        shared = (j.array ?? []).compactMap { $0["path"]?.string }
+    }
+
+    /// 이 방 기준 코어 호출(roomId 를 자동으로 붙인다)
+    @discardableResult
+    func req(_ name: String, _ extra: [String: JSON] = [:], timeout: Duration? = .seconds(120), toast: Bool = true) async throws -> JSON {
+        var a = extra
+        a["roomId"] = .number(Double(roomId))
+        return try await app.call(name, .object(a), timeout: timeout, toast: toast)
     }
 
     // MARK: 보내기·내 모델 선택

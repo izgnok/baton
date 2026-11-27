@@ -130,7 +130,7 @@ private struct ModeSwitch: View {
 }
 
 /// 모델·노력 선택 상자: 높이 24. 첫 칸은 방 기본(빈 값)
-private struct PickMenu: View {
+struct PickMenu: View {
     let title: String
     let options: [(value: String, label: String)]
     let current: String

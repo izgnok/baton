@@ -59,7 +59,7 @@ struct RoomView: View {
         .frame(height: 52)
     }
 
-    // MARK: 오른쪽 패널 자리(탭 이름만. 내용은 다음 단계)
+    // MARK: 오른쪽 패널
 
     private var panel: some View {
         VStack(spacing: 0) {
@@ -77,7 +77,11 @@ struct RoomView: View {
             }
             .frame(maxWidth: .infinity)
             Rectangle().fill(Theme.line).frame(height: 1)
-            Spacer()
+            switch model.tab {
+            case "repos": ReposPanel(model: model)
+            case "shared": SharedPanel(model: model)
+            default: MembersPanel(model: model)
+            }
         }
         .background(Theme.bg)
     }

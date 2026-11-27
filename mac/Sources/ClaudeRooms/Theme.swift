@@ -41,6 +41,8 @@ enum Theme {
     static let bannerWarnText = Color(light: 0x3B2A00, dark: 0x3B2A00)
     /// [Claude/사람] 전환의 선택된 칸(다크에서 바탕보다 밝게)
     static let segOn = Color(light: 0xFFFFFF, dark: 0x3A3A45)
+    /// 카드 위 작은 버튼 바탕(다크에서 카드보다 밝게, DK3)
+    static let cardButton = Color(light: 0xFFFFFF, dark: 0x2C2C35)
     static let usageTrack = Color(light: 0xE5E8EB, dark: 0x3A3A45)
 }
 
@@ -90,7 +92,7 @@ enum BtnSize {
     }
 }
 
-enum BtnKind { case primary, secondary, danger, soft, plain }
+enum BtnKind { case primary, secondary, danger, soft, plain, onCard, onCardDanger }
 
 struct RoomsButtonStyle: ButtonStyle {
     var size: BtnSize = .regular
@@ -114,6 +116,7 @@ struct RoomsButtonStyle: ButtonStyle {
             case .primary: configuration.isPressed ? Theme.primaryPress : Theme.primary
             case .secondary, .danger: Theme.card
             case .plain: Theme.bg
+            case .onCard, .onCardDanger: Theme.cardButton
             case .soft: Theme.accentSoft
             }
         }
@@ -121,8 +124,8 @@ struct RoomsButtonStyle: ButtonStyle {
         private var foreground: Color {
             switch kind {
             case .primary: .white
-            case .secondary, .plain: Theme.text
-            case .danger: Theme.dangerText
+            case .secondary, .plain, .onCard: Theme.text
+            case .danger, .onCardDanger: Theme.dangerText
             case .soft: Theme.accentText
             }
         }
