@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setPendingBranches } from '../main/localConfig.js';
+import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, setCodeApplied } from '../main/localConfig.js';
 
 let home;
 beforeEach(() => {
@@ -85,13 +85,19 @@ test('usage 는 저장 후 다시 읽어도 남고, 모양이 틀리면 버린�
   assert.equal('usage' in loadConfig(), false);
 });
 
-test('setPendingBranches: 방별 대기 브랜치를 넣고 비면 키를 지운다, 다른 값은 유지, 원본은 그대로', () => {
+test('setCodeApplied: 레포별 마지막으로 맞춘 스냅샷을 넣고 null 이면 지운다, 다른 값은 유지, 원본은 그대로', () => {
   const base = addReadDirs(setRepoPath({ serverUrl: null, token: null, rooms: {} }, 1, 7, '/r'), 1, ['/x']);
-  const a = setPendingBranches(base, 1, { 7: 'feature/X' });
-  assert.deepEqual(a.rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'], pendingBranches: { 7: 'feature/X' } });
-  assert.equal(base.rooms[1].pendingBranches, undefined);
-  saveConfig(a);
-  assert.deepEqual(loadConfig().rooms[1].pendingBranches, { 7: 'feature/X' });
-  assert.deepEqual(setPendingBranches(a, 1, {}).rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'] });
-  assert.deepEqual(setPendingBranches({ rooms: {} }, 4, { 1: 'b' }).rooms[4], { repos: {}, pendingBranches: { 1: 'b' } });
+  const a = setCodeApplied(base, 1, 7, 'abc');
+  assert.deepEqual(a.rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'], code: { 7: 'abc' } });
+  assert.equal(base.rooms[1].code, undefined);
+  const b = setCodeApplied(a, 1, 8, 'def');
+  assert.deepEqual(b.rooms[1].code, { 7: 'abc', 8: 'def' });
+  saveConfig(b);
+  assert.deepEqual(loadConfig().rooms[1].code, { 7: 'abc', 8: 'def' });
+  assert.deepEqual(setCodeApplied(b, 1, 8, null).rooms[1].code, { 7: 'abc' });
+  assert.deepEqual(setCodeApplied(a, 1, 7, null).rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'] });
+  assert.deepEqual(setCodeApplied({ rooms: {} }, 4, 1, 'z').rooms[4], { repos: {}, code: { 1: 'z' } });
+  // 옛 config 의 pendingBranches 는 읽어도 어디에도 쓰이지 않는다
+  saveConfig({ serverUrl: null, token: null, rooms: { 1: { repos: {}, pendingBranches: { 7: 'x' } } } });
+  assert.deepEqual(setCodeApplied(loadConfig(), 1, 7, 'k').rooms[1].code, { 7: 'k' });
 });

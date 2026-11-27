@@ -159,26 +159,6 @@ test('옛 스키마 DB 를 열면 default_model·default_effort 칸이 생기고
   }
 });
 
-test('checkRunBranches·setRunBranches: 이 방 레포만, 이름은 문자열(앞뒤 공백 제거·- 로 시작 금지), 방장 검사 없음', () => {
-  const { db, ids: [a, b] } = setup();
-  const room = R.createRoom(db, a, { name: '방' });
-  const other = R.createRoom(db, a, { name: '다른 방' });
-  R.joinRoom(db, b, { inviteCode: room.inviteCode });
-  const repo = R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'u', branch: 'main' });
-  const foreign = R.addRepo(db, a, other.id, { name: 'x', remoteUrl: 'u', branch: 'main' });
-  const bad = { message: 'INVALID_INPUT' };
-  assert.deepEqual(R.checkRunBranches(db, room.id, []), []);
-  assert.throws(() => R.checkRunBranches(db, room.id, undefined), bad);
-  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: foreign.id, branch: 'b' }]), bad);
-  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: '--upload-pack=x' }]), bad);
-  assert.throws(() => R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: 7 }]), bad);
-  const ok = R.checkRunBranches(db, room.id, [{ repoId: repo.id, branch: ' feature/X ' }]);
-  assert.deepEqual(ok, [{ id: repo.id, branch: 'feature/X' }]);
-  R.setRunBranches(db, ok);
-  assert.equal(R.getRoomState(db, b, room.id).repos[0].branch, 'feature/X');
-  assert.equal(R.getRoomState(db, a, other.id).repos[0].branch, 'main');
-});
-
 test('공개: 새 방은 기본 공개, 비멤버의 공개 방 목록에만 보이고 초대 코드는 없다', () => {
   const { db, ids: [a, b] } = setup();
   const pub = R.createRoom(db, a, { name: '공개방' });
@@ -357,7 +337,7 @@ test('setRepo: 추가(이름 기본값·같은 원격 두 번)·수정(안 준 �
   assert.throws(() => R.removeRoomRepo(db, room.id, foreign.id), bad);
 });
 
-test('setRunBranches·updateRepo: 기준이 바뀐 레포는 코드 상태를 비우고, 같으면 그대로', () => {
+test('updateRepo: 기준이 바뀐 레포는 코드 상태를 비우고, 같으면 그대로', () => {
   const { db, ids: [a] } = setup(1);
   const room = R.createRoom(db, a, { name: '방' });
   const r1 = R.addRepo(db, a, room.id, { name: 'r1', remoteUrl: 'u1', branch: 'main' });
@@ -365,9 +345,6 @@ test('setRunBranches·updateRepo: 기준이 바뀐 레포는 코드 상태를 �
   for (const id of [r1.id, r2.id]) {
     db.prepare("INSERT INTO code_states VALUES (?, ?, ?, 1, NULL, 1)").run(id, '1'.repeat(40), '2'.repeat(40));
   }
-  const ok = R.checkRunBranches(db, room.id, [{ repoId: r1.id, branch: 'main' }, { repoId: r2.id, branch: 'dev' }]);
-  assert.deepEqual(R.setRunBranches(db, ok), [r2.id]);
-  assert.deepEqual(R.getRoomState(db, a, room.id).repos.map((r) => r.code !== null), [true, false]);
   R.updateRepo(db, a, r1.id, { name: '새 이름' });
   assert.notEqual(R.getRoomState(db, a, room.id).repos[0].code, null);
   R.updateRepo(db, a, r1.id, { branch: 'dev' });

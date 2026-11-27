@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 테스트용 가짜 claude: FAKE_STREAM 줄 출력, FAKE_STDERR, FAKE_EXIT, FAKE_RECORD,
 // FAKE_SLEEP_MS(출력 전 대기), FAKE_TRANSCRIPT(대화 원본 쓰기), FAKE_SHARED_WRITE(shared 아래 파일 쓰기),
-// FAKE_REPO_WRITE(첫 --add-dir 폴더 아래 파일 쓰기), FAKE_REPO_GIT(첫 --add-dir 폴더에서 git 실행, JSON [[인자…], …])
+// FAKE_REPO_WRITE(첫 --add-dir 폴더 아래 파일 쓰기), FAKE_REPO_WRITE_SEQ(JSON [파일…] — 실행할 때마다 다음 파일을 쓴다, 횟수는 FAKE_SEQ_FILE 에 기록), FAKE_REPO_GIT(첫 --add-dir 폴더에서 git 실행, JSON [[인자…], …])
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -41,6 +41,15 @@ if (process.env.FAKE_REPO_WRITE) {
   const f = path.join(argv[argv.indexOf('--add-dir') + 1], process.env.FAKE_REPO_WRITE);
   fs.mkdirSync(path.dirname(f), { recursive: true });
   fs.writeFileSync(f, '고친 코드');
+}
+if (process.env.FAKE_REPO_WRITE_SEQ && process.argv.includes('--add-dir')) { // 작업 폴더가 없으면 쓰지 않는다(레포 밖에 파일이 새지 않게)
+  const argv = process.argv.slice(2);
+  const counter = process.env.FAKE_SEQ_FILE;
+  const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+  fs.writeFileSync(counter, String(n + 1));
+  const f = path.join(argv[argv.indexOf('--add-dir') + 1], JSON.parse(process.env.FAKE_REPO_WRITE_SEQ)[n]);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, `고친 코드 ${n}`);
 }
 if (process.env.FAKE_REPO_GIT) {
   const argv = process.argv.slice(2);

@@ -41,7 +41,12 @@ async function stateTree(wt) {
   const index = path.join(dir, 'index');
   try {
     const real = path.resolve(wt, await git(wt, ['rev-parse', '--git-path', 'index']));
-    if (fs.existsSync(real)) fs.copyFileSync(real, index); // 비어 있는 인덱스에서 시작해도 결과는 같다(복사는 속도용)
+    if (fs.existsSync(real)) { // 비어 있는 인덱스에서 시작해도 결과는 같다(복사는 속도용)
+      fs.copyFileSync(real, index);
+      // 수정 시각도 원본대로 둔다. 새 시각이면 git 이 "인덱스를 쓴 그 순간에 고친 같은 크기 파일"을 변경 없음으로 본다(racy git)
+      const st = fs.statSync(real);
+      fs.utimesSync(index, st.atime, st.mtime);
+    }
     const env = { GIT_INDEX_FILE: index };
     await git(wt, ['add', '-A'], { env, timeout: NET });
     return await git(wt, ['write-tree'], { env });
@@ -51,26 +56,32 @@ async function stateTree(wt) {
 }
 
 /**
- * 지금 상태를 담은 커밋(부모 = 지금 HEAD)을 만든다. 작업 폴더·인덱스·HEAD 는 바꾸지 않는다
- * @returns {Promise<{snapshot: string, empty: boolean}>} empty: HEAD 가 base 이고 바뀐 것이 없음
+ * 지금 상태를 담은 커밋을 만든다. 첫째 부모 = 지금 HEAD, 둘째 부모 = prev(이전 스냅샷, 이 저장소에 있을 때만).
+ * 둘째 부모 덕에 묶음에서 이전 스냅샷이 가진 내용이 빠진다. 작업 폴더·인덱스·HEAD 는 바꾸지 않는다
+ * @returns {Promise<{snapshot: string, empty: boolean, same: boolean}>}
+ *   empty: HEAD 가 base 이고 바뀐 것이 없음. same: prev 가 있고 prev 와 트리·첫째 부모가 같음(서버 상태에서 바뀐 것 없음)
  */
-export async function snapshot({ worktree, base }) {
+export async function snapshot({ worktree, base, prev }) {
   const tree = await stateTree(worktree);
   const head = await rp(worktree, 'HEAD');
-  const snap = await git(worktree, ['commit-tree', tree, '-p', head, '-m', 'rooms snapshot']);
+  const prevSha = prev ? await rpOr(worktree, `${prev}^{commit}`) : '';
+  const snap = await git(worktree, ['commit-tree', tree, '-p', head, ...(prevSha ? ['-p', prevSha] : []), '-m', 'rooms snapshot']);
   const baseSha = base ? await rpOr(worktree, `${base}^{commit}`) : head;
-  return { snapshot: snap, empty: head === baseSha && tree === await rp(worktree, 'HEAD^{tree}') };
+  const same = !!prevSha && await rp(worktree, `${prevSha}^{tree}`) === tree && await rpOr(worktree, `${prevSha}^1`) === head;
+  return { snapshot: snap, empty: head === baseSha && tree === await rp(worktree, 'HEAD^{tree}'), same };
 }
 
 /**
- * base..snapshot 을 묶음 파일로 만든다
- * @returns {Promise<{ok: true, size: number, empty?: true} | {ok: false, reason: 'TOO_BIG', size: number} | {ok: false, reason: 'NO_BASE'}>}
- *   empty: 담을 변경이 없어 파일을 만들지 않았다. NO_BASE: base 가 이 저장소에 없다
+ * (prev 가 있으면 prev 이후, 없으면 base 이후) 바뀐 것을 조각 묶음 파일로 만든다
+ * @returns {Promise<{ok: true, size: number, empty?: true} | {ok: false, reason: 'NO_BASE'}>}
+ *   empty: 담을 변경이 없어 파일을 만들지 않았다(prev 가 없을 때만 base 와 같은지 본다). NO_BASE: base 가 이 저장소에 없다
  */
-export async function createBundle({ worktree, base, snapshot: snap, file, maxBytes = 50 * 1024 * 1024 }) {
+export async function createBundle({ worktree, base, prev, snapshot: snap, file }) {
   const baseSha = await rpOr(worktree, `${base}^{commit}`);
   if (!baseSha) return { ok: false, reason: 'NO_BASE' };
-  if (await rp(worktree, `${snap}^`) === baseSha && await rp(worktree, `${snap}^{tree}`) === await rp(worktree, `${baseSha}^{tree}`)) {
+  const prevSha = prev ? await rpOr(worktree, `${prev}^{commit}`) : '';
+  if (prevSha ? snap === prevSha
+    : await rp(worktree, `${snap}^1`) === baseSha && await rp(worktree, `${snap}^{tree}`) === await rp(worktree, `${baseSha}^{tree}`)) {
     return { ok: true, size: 0, empty: true };
   }
   // 스냅샷 커밋은 ref 가 없어 묶을 수 없다 → 임시 ref. ref 는 같은 원본을 쓰는 사본끼리 공유되므로 이름을 겹치지 않게 한다
@@ -78,31 +89,30 @@ export async function createBundle({ worktree, base, snapshot: snap, file, maxBy
   const out = path.resolve(file);
   await git(worktree, ['update-ref', ref, snap]);
   try {
-    await git(worktree, ['bundle', 'create', '--quiet', out, `${baseSha}..${ref}`], { timeout: NET });
+    await git(worktree, ['bundle', 'create', '--quiet', out, ref, ...(prevSha ? [`^${prevSha}`] : []), `^${baseSha}`], { timeout: 10 * 60000 });
   } finally {
     await git(worktree, ['update-ref', '-d', ref]).catch(() => {});
   }
-  const size = fs.statSync(out).size;
-  if (size > maxBytes) {
-    fs.rmSync(out, { force: true });
-    return { ok: false, reason: 'TOO_BIG', size };
-  }
-  return { ok: true, size };
+  return { ok: true, size: fs.statSync(out).size };
 }
 
-/** 묶음에서 스냅샷 커밋(과 부모들)을 받아 온다. 받는 데 필요한 기준 커밋이 이 저장소에 없으면 false */
-async function fetchSnapshot(wt, file, sha) {
-  const abs = path.resolve(file);
-  const heads = (await git(wt, ['bundle', 'list-heads', abs])).split('\n').map((l) => l.split(' '));
-  const ref = heads.find(([s]) => s === sha)?.[1];
-  if (!ref) throw new Error('BAD_BUNDLE');
-  try {
-    await git(wt, ['bundle', 'verify', abs]);
-  } catch (e) {
-    if (/prerequisite/i.test(e.message)) return false;
-    throw e;
+/**
+ * 조각 파일들을 차례로 받아 온다(앞 조각이 뒤 조각의 prerequisite). 마지막 조각에 sha 가 없으면 BAD_BUNDLE,
+ * 받는 데 필요한 커밋이 이 저장소에 없으면 false
+ */
+async function fetchParts(wt, files, sha) {
+  const abs = files.map((f) => path.resolve(f));
+  const headsOf = async (f) => (await git(wt, ['bundle', 'list-heads', f])).split('\n').map((l) => l.split(' '));
+  if (!(await headsOf(abs.at(-1))).some(([s]) => s === sha)) throw new Error('BAD_BUNDLE');
+  for (const f of abs) {
+    try {
+      await git(wt, ['bundle', 'verify', f]);
+    } catch (e) {
+      if (/prerequisite/i.test(e.message)) return false;
+      throw e;
+    }
+    await git(wt, ['fetch', '--quiet', '--no-tags', f, ...(await headsOf(f)).map(([, r]) => r)], { timeout: 10 * 60000 });
   }
-  await git(wt, ['fetch', '--quiet', '--no-tags', abs, ref], { timeout: NET });
   return true;
 }
 
@@ -120,20 +130,21 @@ async function locallyChanged(wt, lastApplied) {
   const tree = await stateTree(wt);
   if (!lastApplied) return tree !== await rp(wt, 'HEAD^{tree}');
   try {
-    return tree !== await rp(wt, `${lastApplied}^{tree}`) || await rp(wt, 'HEAD') !== await rp(wt, `${lastApplied}^`);
+    return tree !== await rp(wt, `${lastApplied}^{tree}`) || await rp(wt, 'HEAD') !== await rp(wt, `${lastApplied}^1`);
   } catch { return true; } // 마지막으로 맞춘 상태를 모르면 안전한 쪽으로
 }
 
 /**
- * 묶음의 스냅샷 S 로 사본을 맞춘다(HEAD = S^ detached, 작업 폴더 = S, 인덱스 = HEAD)
- * U11: 직접 고친 것이 있으면 맞추지 않는다. MISSING_BASE: 묶음의 기준 커밋이 이 저장소에 없다(원격을 먼저 fetch)
+ * 조각들(seq 순)을 차례로 받아 마지막 스냅샷 S 로 사본을 맞춘다(HEAD = S^1 detached, 작업 폴더 = S, 인덱스 = HEAD)
+ * files 는 이 맥이 아직 못 받은 조각부터 주면 된다(앞 조각은 이미 저장소에 있어야 함)
+ * U11: 직접 고친 것이 있으면 맞추지 않는다. MISSING_BASE: 조각이 기대는 커밋이 이 저장소에 없다(원격을 먼저 fetch, 빠진 조각)
  * @returns {Promise<{applied: true} | {applied: false, reason: 'LOCAL_CHANGES' | 'MISSING_BASE'}>}
- * @throws BAD_BUNDLE (묶음에 snapshot 이 없음)
+ * @throws BAD_BUNDLE (마지막 조각에 snapshot 이 없음)
  */
-export async function applyBundle({ worktree, file, snapshot: snap, lastApplied }) {
+export async function applyParts({ worktree, files, snapshot: snap, lastApplied }) {
   if (await locallyChanged(worktree, lastApplied)) return { applied: false, reason: 'LOCAL_CHANGES' };
-  if (!await fetchSnapshot(worktree, file, snap)) return { applied: false, reason: 'MISSING_BASE' };
-  await alignTo(worktree, `${snap}^`, snap);
+  if (!await fetchParts(worktree, files, snap)) return { applied: false, reason: 'MISSING_BASE' };
+  await alignTo(worktree, `${snap}^1`, snap);
   return { applied: true };
 }
 
@@ -143,8 +154,8 @@ export async function applyBundle({ worktree, file, snapshot: snap, lastApplied 
  * 충돌이면 아무것도 바꾸지 않는다
  * @returns {Promise<{ok: true, snapshot: string} | {ok: false, reason: 'CONFLICT' | 'MISSING_BASE'}>}
  */
-export async function mergeLocal({ worktree, remoteSnapshot, file, lastApplied }) {
-  if (!await fetchSnapshot(worktree, file, remoteSnapshot)) return { ok: false, reason: 'MISSING_BASE' };
+export async function mergeLocal({ worktree, remoteSnapshot, files, lastApplied }) {
+  if (!await fetchParts(worktree, files, remoteSnapshot)) return { ok: false, reason: 'MISSING_BASE' };
   const local = (await snapshot({ worktree })).snapshot;
   let tree;
   try {
@@ -154,8 +165,9 @@ export async function mergeLocal({ worktree, remoteSnapshot, file, lastApplied }
     if (e.code === 1) return { ok: false, reason: 'CONFLICT' };
     throw e;
   }
-  const parent = await rp(worktree, `${remoteSnapshot}^`);
-  const merged = await git(worktree, ['commit-tree', tree, '-p', parent, '-m', 'rooms snapshot']);
+  const parent = await rp(worktree, `${remoteSnapshot}^1`);
+  // 둘째 부모 = 원격 스냅샷: 다음 증분 묶음에서 원격 스냅샷의 내용이 빠진다
+  const merged = await git(worktree, ['commit-tree', tree, '-p', parent, '-p', remoteSnapshot, '-m', 'rooms snapshot']);
   await alignTo(worktree, parent, merged);
   return { ok: true, snapshot: merged };
 }
@@ -165,7 +177,7 @@ export async function mergeLocal({ worktree, remoteSnapshot, file, lastApplied }
  * 충돌이면 원래 상태로 되돌린다(syncWorktree 와 같은 처리)
  * @returns {Promise<{ok: true, snapshot: string} | {ok: false, reason: 'CONFLICT'}>}
  */
-export async function rebaseOnto({ worktree, base, newBase }) {
+export async function rebaseOnto({ worktree, base, newBase, prev }) {
   const [baseSha, newSha] = [await rp(worktree, `${base}^{commit}`), await rp(worktree, `${newBase}^{commit}`)];
   if (await git(worktree, ['symbolic-ref', '-q', 'HEAD']).catch(() => '')) await git(worktree, ['switch', '--detach']); // 브랜치를 다시 쓰지 않게
   const oldHead = await rp(worktree, 'HEAD');
@@ -182,7 +194,7 @@ export async function rebaseOnto({ worktree, base, newBase }) {
     await git(worktree, ['rebase', '--abort']).catch(() => {}); // 진행 중이 아니면 실패해도 무시
     return { ok: false, reason: 'CONFLICT' };
   }
-  return { ok: true, snapshot: (await snapshot({ worktree, base: newSha })).snapshot };
+  return { ok: true, snapshot: (await snapshot({ worktree, base: newSha, prev })).snapshot };
 }
 
 /** 원격(origin)에 브랜치가 있는가. 원격에 닿지 못하면 던진다(없다고 단정하지 않는다) */

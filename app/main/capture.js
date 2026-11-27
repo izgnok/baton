@@ -11,7 +11,7 @@ import path from 'node:path';
 import { MSG } from '@rooms/shared/protocol.js';
 import { createServerClient, signup } from './serverClient.js';
 import { saveConfig } from './localConfig.js';
-import { syncWorktree, worktreePath } from './runner/worktree.js';
+import { ensureWorktree, worktreePath } from './runner/worktree.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b64 = (text) => Buffer.from(text).toString('base64');
@@ -162,7 +162,7 @@ export async function startCapture(outDir) {
     await handlers.addRepo({ roomId, name: 'payment-web', remoteUrl: 'https://github.com/example/payment-web.git', branch: 'develop' });
     await handlers.linkRepo({ roomId, repoId: repo1.id, localPath: mine });
     // 방 작업 폴더가 이미 만들어진 상태
-    await syncWorktree({ sourcePath: mine, worktreePath: worktreePath(roomId, repo1), branch: 'feature/ABC-123' });
+    await ensureWorktree({ sourcePath: mine, worktreePath: worktreePath(roomId, repo1), branch: 'feature/ABC-123' });
     await handlers.addReadDir({ roomId, path: notes });
 
     // B 가 받는 run.start 마다 차례로 시나리오를 돌린다
@@ -199,7 +199,6 @@ export async function startCapture(outDir) {
       await event(requestId, inner('a1', text('재시도는 `client.js:58` 한 곳에만 있어요.')));
       await event(requestId, result('a1', '재시도는 src/payment/client.js:58 한 곳에만 있어요.'));
       await event(requestId, text(MD_DONE));
-      await event(requestId, { type: 'rooms_branch_changes', results: [{ repoId: repo1.id, repoName: 'payment-api', branch: 'feature/ABC-124', pending: true }] });
       await event(requestId, {
         type: 'rooms_code_changes',
         results: [{

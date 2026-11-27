@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import WebSocket from 'ws';
 import { MSG } from '@rooms/shared/protocol.js';
 
@@ -147,6 +150,39 @@ export function createServerClient({ serverUrl, token, WebSocketImpl = WebSocket
     },
     getManifest: async (roomId) => (await get(`/rooms/${roomId}/shared-manifest`)).json(),
     getShared: async (roomId, p) => Buffer.from(await (await get(`/rooms/${roomId}/shared?path=${encodeURIComponent(p)}`)).arrayBuffer()),
+    /** 레포의 코드 조각 목록 → [{seq, prevSnapshot, snapshot, baseCommit, size}] (seq 순) */
+    listCodeParts: async (roomId, repoId) => (await (await get(`/rooms/${roomId}/code/${repoId}`)).json()).parts,
+    /** 조각 하나를 file 로 흘려 저장한다(메모리에 모으지 않음). 실패하면 반쯤 쓴 파일을 지우고 던진다 */
+    downloadCodePart: async (roomId, repoId, seq, file) => {
+      const res = await get(`/rooms/${roomId}/code/${repoId}/${seq}`);
+      try {
+        await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(file));
+      } catch (e) {
+        fs.rmSync(file, { force: true });
+        throw e;
+      }
+    },
+    /** 묶음 파일을 흘려 올린다 → {uploadId, size}. 서버 상한을 넘으면 BUNDLE_TOO_BIG */
+    uploadBundle: async (roomId, requestId, file) => {
+      const size = fs.statSync(file).size; // 파일이 없으면 스트림을 만들기 전에 던진다
+      const body = fs.createReadStream(file);
+      let res;
+      try {
+        res = await fetch(`${base}/rooms/${roomId}/code-upload?requestId=${encodeURIComponent(requestId)}`, {
+          method: 'PUT',
+          body,
+          duplex: 'half',
+          headers: { 'content-length': String(size), authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+        });
+      } catch {
+        throw new Error('SERVER_UNREACHABLE');
+      } finally {
+        body.destroy();
+      }
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 413 ? 'BUNDLE_TOO_BIG' : json.error ?? `HTTP_${res.status}`);
+      return json;
+    },
   };
 
   connect();

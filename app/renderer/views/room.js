@@ -357,7 +357,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   const repoFields = (r = {}) => [
     { name: 'name', label: '레포 이름', value: r.name, placeholder: 'payment-api' },
     { name: 'remoteUrl', label: '레포 주소', value: r.remoteUrl, placeholder: 'git@github.com:team/payment-api.git' },
-    { name: 'branch', label: '브랜치', value: r.branch ?? 'main' },
+    { name: 'branch', label: '브랜치', value: r.baseBranch ?? 'main' },
   ];
 
   function repoCard(r) {
@@ -395,7 +395,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     }
     return h('div', { class: 'mini-card' },
       h('div', { class: 'name' }, r.name),
-      h('div', { class: 'sub' }, `브랜치 ${r.branch}`),
+      h('div', { class: 'sub' }, `브랜치 ${r.baseBranch}`),
       h('div', { class: 'path' }, r.remoteUrl),
       lines, row);
   }

@@ -8,7 +8,7 @@ import { safeDirName } from './preflight.js';
 const run = promisify(execFile);
 
 // 실패하면 stderr 를 error.message 에 담아 던진다(호출부가 거절·충돌을 구분하는 데 쓴다). raw 는 앞뒤 공백을 그대로 둔다
-async function git(args, timeout = 15000, { raw = false, maxBuffer } = {}) {
+export async function git(args, timeout = 15000, { raw = false, maxBuffer } = {}) {
   try {
     const r = await run('git', args, { timeout, maxBuffer, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
     return raw ? r.stdout : r.stdout.trim();
@@ -20,8 +20,7 @@ async function git(args, timeout = 15000, { raw = false, maxBuffer } = {}) {
   }
 }
 
-const NET = 60000;
-const UNMERGED = /^(DD|AU|UD|UA|DU|AA|UU) /m;
+export const NET = 60000;
 
 /** 방 전용 작업 폴더 경로 */
 export const worktreePath = (roomId, repo) =>
@@ -35,12 +34,7 @@ export async function assertBranch(branch) {
   try { await git(['check-ref-format', `refs/heads/${branch}`]); } catch { throw new Error('BAD_BRANCH'); }
 }
 
-/** 작업 폴더가 붙어 있는 브랜치 이름. detached 면 '' */
-export const currentBranch = (wt) => git(['-C', wt, 'symbolic-ref', '-q', '--short', 'HEAD']).catch(() => '');
-
-const detach = (wt) => git(['-C', wt, 'switch', '--detach']);
-
-const fetchBranch = (cwd, branch) =>
+export const fetchBranch = (cwd, branch) =>
   git(['-C', cwd, 'fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], NET);
 
 async function isWorktree(dir) {
@@ -52,11 +46,12 @@ async function isWorktree(dir) {
 }
 
 /**
- * 방 작업 폴더를 원격 방 브랜치에 맞춘다(없으면 만든다). 항상 detached HEAD
- * @returns {Promise<{head: string}>}
- * @throws BAD_BRANCH | BRANCH_NOT_ON_REMOTE | FETCH_FAILED | SYNC_CONFLICT | WORKTREE_FAILED
+ * 원본에서 origin/<branch> 를 받고, 사본(작업 폴더)이 없으면 그 커밋에서 detached 로 만든다. 있으면 건드리지 않는다
+ * (사본을 서버 상태로 맞추는 일은 codeSync 가 한다)
+ * @returns {Promise<{created: boolean}>}
+ * @throws BAD_BRANCH | BRANCH_NOT_ON_REMOTE | FETCH_FAILED | WORKTREE_FAILED
  */
-export async function syncWorktree({ sourcePath, worktreePath: wt, branch }) {
+export async function ensureWorktree({ sourcePath, worktreePath: wt, branch }) {
   await assertBranch(branch);
   try {
     await fetchBranch(sourcePath, branch);
@@ -64,79 +59,20 @@ export async function syncWorktree({ sourcePath, worktreePath: wt, branch }) {
     const heads = await git(['-C', sourcePath, 'ls-remote', '--heads', 'origin', `refs/heads/${branch}`]).catch(() => null);
     throw new Error(heads === '' ? 'BRANCH_NOT_ON_REMOTE' : 'FETCH_FAILED');
   }
-  const target = `origin/${branch}`;
-
-  if (!await isWorktree(wt)) {
-    try {
-      fs.mkdirSync(path.dirname(wt), { recursive: true });
-      await git(['-C', sourcePath, 'worktree', 'prune']); // 폴더만 지워진 옛 등록 정리
-      await git(['-C', sourcePath, 'worktree', 'add', '--detach', wt, target]);
-    } catch { throw new Error('WORKTREE_FAILED'); }
-    return { head: await git(['-C', wt, 'rev-parse', '--short', 'HEAD']) };
-  }
-
-  // 브랜치에 붙어 있으면(옮겨 둔 채 끝난 실행) 떼어 놓는다. rebase 가 그 브랜치를 다시 쓰지 않게
-  if (await currentBranch(wt)) await detach(wt).catch(() => {});
-  const oldHead = await git(['-C', wt, 'rev-parse', 'HEAD']);
-  const stashBefore = await git(['-C', wt, 'rev-parse', '-q', '--verify', 'refs/stash']).catch(() => '');
+  if (await isWorktree(wt)) return { created: false };
   try {
-    await git(['-C', wt, 'rebase', '--autostash', target]);
-    // autostash 를 되돌려 얹다 충돌하면 rebase 는 성공으로 끝나고 충돌 표시만 남는다 → 원래 상태로 되돌린다
-    if (UNMERGED.test(await git(['-C', wt, 'status', '--porcelain']))) {
-      await git(['-C', wt, 'reset', '--hard', oldHead]);
-      const stashNow = await git(['-C', wt, 'rev-parse', '-q', '--verify', 'refs/stash']).catch(() => '');
-      if (stashNow !== stashBefore) await git(['-C', wt, 'stash', 'pop']);
-      throw new Error('SYNC_CONFLICT');
-    }
-  } catch (e) {
-    if (e.message === 'SYNC_CONFLICT') throw e;
-    await git(['-C', wt, 'rebase', '--abort']).catch(() => {}); // 진행 중이 아니면 실패해도 무시
-    throw new Error('SYNC_CONFLICT');
-  }
-  return { head: await git(['-C', wt, 'rev-parse', '--short', 'HEAD']) };
+    fs.mkdirSync(path.dirname(wt), { recursive: true });
+    await git(['-C', sourcePath, 'worktree', 'prune']); // 폴더만 지워진 옛 등록 정리
+    await git(['-C', sourcePath, 'worktree', 'add', '--detach', wt, `origin/${branch}`]);
+  } catch { throw new Error('WORKTREE_FAILED'); }
+  return { created: true };
 }
 
-/**
- * 실행이 끝난 뒤 작업 폴더가 붙어 있는 브랜치를 보고 방에 알릴 것·대기·되돌릴 폴더를 정한다(작업 폴더는 바꾸지 않는다)
- * - detached 이거나 방 브랜치로 돌아왔으면 대기를 지운다(방 브랜치에 붙어 있으면 되돌릴 폴더에 넣는다)
- * - 다른 브랜치가 origin 에 있으면 방 브랜치 변경 대상(pending: false), 없으면 대기(pending: true, 같은 브랜치는 한 번만 알림)
- * @param {{trees: {repo: {id: number, name: string, branch: string}, wt: string}[], pending: Record<string, string>}} p
- * @returns {Promise<{changes: {repoId: number, repoName: string, branch: string, pending: boolean}[], pending: Record<string, string>, detach: string[]}>}
- */
-export async function scanBranches({ trees, pending }) {
-  const changes = [];
-  const next = { ...pending };
-  const back = [];
-  for (const { repo, wt } of trees) {
-    const b = await currentBranch(wt);
-    if (!b || b === repo.branch) {
-      delete next[repo.id];
-      if (b) back.push(wt);
-    } else if (await git(['-C', wt, 'ls-remote', '--heads', 'origin', `refs/heads/${b}`], NET).then((o) => o !== '', () => false)) {
-      await fetchBranch(wt, b).catch(() => {}); // 앞선 커밋 수를 셀 수 있게
-      changes.push({ repoId: repo.id, repoName: repo.name, branch: b, pending: false });
-      delete next[repo.id];
-      back.push(wt);
-    } else {
-      if (pending[repo.id] !== b) changes.push({ repoId: repo.id, repoName: repo.name, branch: b, pending: true });
-      next[repo.id] = b;
-    }
-  }
-  return { changes, pending: next, detach: back };
+/** 사본 폴더를 변경 여부와 상관없이 지운다(다음 맞추기 때 새로 만들어진다) */
+export async function discardWorktree({ sourcePath, worktreePath: wt }) {
+  fs.rmSync(wt, { recursive: true, force: true });
+  if (sourcePath) await git(['-C', sourcePath, 'worktree', 'prune']).catch(() => {});
 }
-
-/** 실패한 실행 뒤: 옮겨 둔 브랜치를 대기로만 적는다(다음 실행의 동기화가 그 브랜치를 건드리지 않게). 알림·되돌리기는 성공한 실행이 한다 */
-export async function deferBranches({ trees, pending }) {
-  const next = { ...pending };
-  for (const { repo, wt } of trees) {
-    const b = await currentBranch(wt);
-    if (b && b !== repo.branch) next[repo.id] = b; else delete next[repo.id];
-  }
-  return next;
-}
-
-/** 작업 폴더들을 지금 커밋에서 detached 로 되돌린다(고친 파일은 그대로) */
-export const detachWorktrees = (wts) => Promise.all(wts.map((wt) => detach(wt).catch(() => {})));
 
 const DIFF_LIMIT = 60 * 1024;
 

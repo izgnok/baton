@@ -237,7 +237,6 @@ export function attachWs(server, { db, files }) {
         || typeof m.transcript !== 'string' || !Array.isArray(changes)
         || !changes.every((c) => c && typeof c.path === 'string'
           && (c.contentBase64 === null || typeof c.contentBase64 === 'string'))) throw bad();
-      const branches = R.checkRunBranches(db, roomId, m.branchChanges ?? []); // Claude 가 옮긴 레포 브랜치(방장이 아니어도 반영)
       const codeStates = R.checkCodeStates(files, roomId, m.codeStates ?? []); // 파일을 옮기기 전에 검사한다
       const promoted = R.checkPromoted(m.promotedRepoIds ?? []);
       return queue.finish(requestId, {
@@ -245,7 +244,6 @@ export function attachWs(server, { db, files }) {
         sessionId: m.sessionId,
         apply: () => {
           // 체인을 지우는 단계는 바로 파일도 지운다(뒤의 codeStates 가 새로 올린 조각을 지우지 않도록)
-          R.setRunBranches(db, branches).forEach((repoId) => codeCleared(roomId, repoId, u));
           R.applyPromotions(db, roomId, promoted).forEach((repoId) => codeCleared(roomId, repoId, u)); // codeStates 의 기준 브랜치 비교는 이 뒤 값으로
           const changed = R.applyCodeStates(db, files, roomId, u, codeStates);
           files.applyShared(roomId, changes);

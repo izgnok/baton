@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { snapshot, createBundle, applyBundle, mergeLocal, rebaseOnto, remoteHas } from '../main/runner/codeState.js';
+import { snapshot, createBundle, applyParts, mergeLocal, rebaseOnto, remoteHas } from '../main/runner/codeState.js';
 
 const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.quotepath=off', ...args], { cwd, stdio: 'pipe' }).toString().trim();
 
@@ -55,11 +56,11 @@ function setup() {
     g(o, 'push', '-q', 'origin', 'HEAD:refs/heads/release/1.0');
     return g(bare, 'rev-parse', 'release/1.0');
   };
-  // 스냅샷을 만들고 묶는다
-  f.pack = async (wt, maxBytes) => {
-    const s = await snapshot({ worktree: wt, base: f.base });
+  // 스냅샷을 만들고 묶는다(prev: 이전 스냅샷 — 주면 그 이후 바뀐 것만 묶는다)
+  f.pack = async (wt, prev) => {
+    const s = await snapshot({ worktree: wt, base: f.base, prev });
     const file = path.join(tmp, `${name}-${++f.n}.bundle`);
-    const r = await createBundle({ worktree: wt, base: f.base, snapshot: s.snapshot, file, maxBytes });
+    const r = await createBundle({ worktree: wt, base: f.base, prev, snapshot: s.snapshot, file });
     return { ...s, file, r };
   };
   return f;
@@ -125,7 +126,7 @@ test('createBundle: 변경이 없으면 묶지 않고, base 가 없으면 NO_BAS
   assert.equal(g(wt, 'for-each-ref', 'refs/rooms'), '');
 });
 
-test('createBundle → applyBundle: B 사본이 A 사본과 같아진다(커밋·커밋 안 한 변경 구분 유지)', async () => {
+test('createBundle → applyParts: B 사본이 A 사본과 같아진다(커밋·커밋 안 한 변경 구분 유지)', async () => {
   const f = setup();
   const a = f.mac('a');
   const b = f.mac('b');
@@ -133,7 +134,7 @@ test('createBundle → applyBundle: B 사본이 A 사본과 같아진다(커밋�
   work(a.wt);
   const p = await f.pack(a.wt);
   assert.equal(p.r.ok, true);
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p.file, snapshot: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p.file], snapshot: p.snapshot }), { applied: true });
 
   assert.equal(g(b.wt, 'rev-parse', 'HEAD'), g(a.wt, 'rev-parse', 'HEAD')); // 커밋된 상태
   assert.equal(g(b.wt, 'branch', '--show-current'), '');
@@ -148,13 +149,13 @@ test('createBundle → applyBundle: B 사본이 A 사본과 같아진다(커밋�
   write(a.wt, 'v.txt', 'v\n');
   write(a.wt, 'a.txt', lines(7, { 1: 'A1', 7: 'A7' }));
   const p2 = await f.pack(a.wt);
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p2.file, snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p2.file], snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
   assert.equal(status(b.wt), status(a.wt));
   assert.equal(fs.existsSync(path.join(b.wt, 'u.txt')), false);
   assert.equal(read(b.wt, 'a.txt'), read(a.wt, 'a.txt'));
 });
 
-test('applyBundle: .gitignore 된 파일은 묶이지도 지워지지도 않는다', async () => {
+test('applyParts: .gitignore 된 파일은 묶이지도 지워지지도 않는다', async () => {
   const f = setup();
   const a = f.mac('a');
   const b = f.mac('b');
@@ -163,31 +164,19 @@ test('applyBundle: .gitignore 된 파일은 묶이지도 지워지지도 않는�
   write(b.wt, 'junk.log', 'B-junk\n'); // 직접 고침 판정에도 안 걸린다
   const p = await f.pack(a.wt);
   assert.equal(g(a.wt, 'ls-tree', '-r', '--name-only', p.snapshot).includes('junk.log'), false);
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p.file, snapshot: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p.file], snapshot: p.snapshot }), { applied: true });
   assert.equal(read(b.wt, 'junk.log'), 'B-junk\n');
   assert.equal(read(b.wt, 'x.txt'), 'x\n');
   // 다음 맞추기에서 A 쪽 x.txt 가 사라져도 B 의 junk.log 는 남는다
   fs.rmSync(path.join(a.wt, 'x.txt'));
   write(a.wt, 'y.txt', 'y\n');
   const p2 = await f.pack(a.wt);
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p2.file, snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p2.file], snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
   assert.equal(fs.existsSync(path.join(b.wt, 'x.txt')), false);
   assert.equal(read(b.wt, 'junk.log'), 'B-junk\n');
 });
 
-test('createBundle: 50MB 상한(maxBytes)을 넘으면 TOO_BIG 이고 파일을 남기지 않는다', async () => {
-  const f = setup();
-  const { wt } = f.mac('a');
-  write(wt, 'x.txt', 'x'.repeat(5000));
-  const p = await f.pack(wt, 10);
-  assert.equal(p.r.ok, false);
-  assert.equal(p.r.reason, 'TOO_BIG');
-  assert.ok(p.r.size > 10);
-  assert.equal(fs.existsSync(p.file), false);
-  assert.equal(g(wt, 'for-each-ref', 'refs/rooms'), '');
-});
-
-test('applyBundle U11: B 가 직접 고친 상태면 맞추지 않고 LOCAL_CHANGES, B 는 그대로', async () => {
+test('applyParts U11: B 가 직접 고친 상태면 맞추지 않고 LOCAL_CHANGES, B 는 그대로', async () => {
   const f = setup();
   const a = f.mac('a');
   const b = f.mac('b');
@@ -196,7 +185,7 @@ test('applyBundle U11: B 가 직접 고친 상태면 맞추지 않고 LOCAL_CHAN
 
   write(b.wt, 'a.txt', lines(7, { 3: 'B3' })); // 마지막으로 맞춘 상태(없음 = 깨끗한 HEAD)와 다르다
   const [head, st] = [g(b.wt, 'rev-parse', 'HEAD'), status(b.wt)];
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p.file, snapshot: p.snapshot }), { applied: false, reason: 'LOCAL_CHANGES' });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p.file], snapshot: p.snapshot }), { applied: false, reason: 'LOCAL_CHANGES' });
   assert.equal(read(b.wt, 'a.txt'), lines(7, { 3: 'B3' }));
   assert.equal(fs.existsSync(path.join(b.wt, 'x.txt')), false);
   assert.equal(g(b.wt, 'rev-parse', 'HEAD'), head);
@@ -204,18 +193,18 @@ test('applyBundle U11: B 가 직접 고친 상태면 맞추지 않고 LOCAL_CHAN
 
   // 맞춘 뒤 새 파일을 만들어도(lastApplied 기준) 직접 고친 것이다
   const c = f.mac('c');
-  assert.deepEqual(await applyBundle({ worktree: c.wt, file: p.file, snapshot: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: c.wt, files: [p.file], snapshot: p.snapshot }), { applied: true });
   write(c.wt, 'mine.txt', 'mine\n');
   write(a.wt, 'y.txt', 'y\n');
   const p2 = await f.pack(a.wt);
-  assert.deepEqual(await applyBundle({ worktree: c.wt, file: p2.file, snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: false, reason: 'LOCAL_CHANGES' });
+  assert.deepEqual(await applyParts({ worktree: c.wt, files: [p2.file], snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: false, reason: 'LOCAL_CHANGES' });
   assert.equal(read(c.wt, 'mine.txt'), 'mine\n');
   // 아무것도 안 고쳤으면 lastApplied 기준으로도 맞춰진다
   fs.rmSync(path.join(c.wt, 'mine.txt'));
-  assert.deepEqual(await applyBundle({ worktree: c.wt, file: p2.file, snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: c.wt, files: [p2.file], snapshot: p2.snapshot, lastApplied: p.snapshot }), { applied: true });
 });
 
-test('applyBundle: 묶음의 기준 커밋이 없는 저장소면 MISSING_BASE, 묶음에 없는 스냅샷이면 BAD_BUNDLE', async () => {
+test('applyParts: 묶음의 기준 커밋이 없는 저장소면 MISSING_BASE, 묶음에 없는 스냅샷이면 BAD_BUNDLE', async () => {
   const f = setup();
   const a = f.mac('a');
   write(a.wt, 'x.txt', 'x\n');
@@ -226,9 +215,9 @@ test('applyBundle: 묶음의 기준 커밋이 없는 저장소면 MISSING_BASE, 
   write(lone, 'z.txt', 'z\n');
   g(lone, 'add', '.');
   g(lone, 'commit', '-q', '-m', 'z');
-  assert.deepEqual(await applyBundle({ worktree: lone, file: p.file, snapshot: p.snapshot }), { applied: false, reason: 'MISSING_BASE' });
+  assert.deepEqual(await applyParts({ worktree: lone, files: [p.file], snapshot: p.snapshot }), { applied: false, reason: 'MISSING_BASE' });
   const b = f.mac('b');
-  await assert.rejects(applyBundle({ worktree: b.wt, file: p.file, snapshot: f.base }), /BAD_BUNDLE/);
+  await assert.rejects(applyParts({ worktree: b.wt, files: [p.file], snapshot: f.base }), /BAD_BUNDLE/);
 });
 
 test('mergeLocal: 겹치지 않는 변경은 합쳐지고(같은 파일 다른 줄 포함) 사본이 합친 스냅샷으로 맞춰진다', async () => {
@@ -237,22 +226,23 @@ test('mergeLocal: 겹치지 않는 변경은 합쳐지고(같은 파일 다른 �
   const b = f.mac('b');
   write(a.wt, 'a.txt', lines(7, { 1: 'A1' }));
   const p1 = await f.pack(a.wt);
-  await applyBundle({ worktree: b.wt, file: p1.file, snapshot: p1.snapshot });
+  await applyParts({ worktree: b.wt, files: [p1.file], snapshot: p1.snapshot });
 
   write(a.wt, 'a.txt', lines(7, { 1: 'A1', 7: 'A7' })); // A 가 이어서 고침
   write(a.wt, 'x.txt', 'x\n');
-  const p2 = await f.pack(a.wt);
+  const p2 = await f.pack(a.wt, p1.snapshot);
   write(b.wt, 'a.txt', lines(7, { 1: 'A1', 4: 'B4' })); // B 가 직접 고침(같은 파일, 다른 줄)
   write(b.wt, 'b.txt', 'B-b\n');
-  assert.equal((await applyBundle({ worktree: b.wt, file: p2.file, snapshot: p2.snapshot, lastApplied: p1.snapshot })).reason, 'LOCAL_CHANGES');
+  assert.equal((await applyParts({ worktree: b.wt, files: [p2.file], snapshot: p2.snapshot, lastApplied: p1.snapshot })).reason, 'LOCAL_CHANGES');
 
-  const r = await mergeLocal({ worktree: b.wt, remoteSnapshot: p2.snapshot, file: p2.file, lastApplied: p1.snapshot });
+  const r = await mergeLocal({ worktree: b.wt, remoteSnapshot: p2.snapshot, files: [p2.file], lastApplied: p1.snapshot });
   assert.equal(r.ok, true);
   assert.equal(read(b.wt, 'a.txt'), lines(7, { 1: 'A1', 4: 'B4', 7: 'A7' }));
   assert.equal(read(b.wt, 'b.txt'), 'B-b\n');
   assert.equal(read(b.wt, 'x.txt'), 'x\n');
   assert.equal(g(b.wt, 'rev-parse', 'HEAD'), g(a.wt, 'rev-parse', 'HEAD')); // 커밋된 상태는 서버 스냅샷의 것
   assert.equal(g(b.wt, 'rev-parse', `${r.snapshot}^`), g(b.wt, 'rev-parse', 'HEAD'));
+  assert.equal(g(b.wt, 'rev-parse', `${r.snapshot}^2`), p2.snapshot); // 둘째 부모 = 원격 스냅샷(다음 증분의 기준)
   assert.equal(g(b.wt, 'diff', '--cached', '--name-only'), '');
   // 합친 결과가 그대로 사본의 상태이므로 lastApplied 로 쓸 수 있다
   assert.equal(await snapshot({ worktree: b.wt }).then((s) => g(b.wt, 'rev-parse', `${s.snapshot}^{tree}`) === g(b.wt, 'rev-parse', `${r.snapshot}^{tree}`)), true);
@@ -264,14 +254,14 @@ test('mergeLocal: 같은 줄 충돌이면 CONFLICT, 사본은 그대로', async 
   const b = f.mac('b');
   write(a.wt, 'a.txt', lines(7, { 1: 'A1' }));
   const p1 = await f.pack(a.wt);
-  await applyBundle({ worktree: b.wt, file: p1.file, snapshot: p1.snapshot });
+  await applyParts({ worktree: b.wt, files: [p1.file], snapshot: p1.snapshot });
   write(a.wt, 'a.txt', lines(7, { 1: 'A1', 7: 'A7' }));
   const p2 = await f.pack(a.wt);
   write(b.wt, 'a.txt', lines(7, { 1: 'A1', 7: 'B7' }));
   write(b.wt, 'mine.txt', 'mine\n');
   const [head, st] = [g(b.wt, 'rev-parse', 'HEAD'), status(b.wt)];
 
-  const r = await mergeLocal({ worktree: b.wt, remoteSnapshot: p2.snapshot, file: p2.file, lastApplied: p1.snapshot });
+  const r = await mergeLocal({ worktree: b.wt, remoteSnapshot: p2.snapshot, files: [p2.file], lastApplied: p1.snapshot });
   assert.deepEqual(r, { ok: false, reason: 'CONFLICT' });
   assert.equal(read(b.wt, 'a.txt'), lines(7, { 1: 'A1', 7: 'B7' }));
   assert.equal(read(b.wt, 'mine.txt'), 'mine\n');
@@ -353,11 +343,130 @@ test('한글 파일 이름: 새 파일·수정·삭제·하위 폴더가 그대�
   write(a.wt, '수정될.txt', '바뀜\n');
   fs.rmSync(path.join(a.wt, '삭제될.txt'));
   const p = await f.pack(a.wt);
-  assert.deepEqual(await applyBundle({ worktree: b.wt, file: p.file, snapshot: p.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p.file], snapshot: p.snapshot }), { applied: true });
   assert.equal(read(b.wt, '새 파일.txt'), '새로\n');
   assert.equal(read(b.wt, '폴더/하위 파일.txt'), '하위\n');
   assert.equal(read(b.wt, '수정될.txt'), '바뀜\n');
   assert.equal(fs.existsSync(path.join(b.wt, '삭제될.txt')), false);
   assert.equal(status(b.wt), status(a.wt));
   assert.ok(names(a.wt, p.snapshot).includes('폴더/하위 파일.txt'));
+});
+
+// ── 증분 조각 ──
+const big = (wt, file = 'big.bin', mb = 4) => write(wt, file, crypto.randomBytes(mb * 1024 * 1024));
+const parentCount = (wt, rev) => g(wt, 'rev-list', '--parents', '-n1', rev).split(' ').length - 1;
+
+test('snapshot prev: 둘째 부모가 prev, 서버 상태에서 바뀐 게 없으면 same, prev 가 저장소에 없으면 부모 1개', async () => {
+  const f = setup();
+  const { wt } = f.mac('a');
+  write(wt, 'x.txt', 'x\n');
+  const s1 = await snapshot({ worktree: wt, base: f.base });
+  assert.equal(s1.same, false);
+  assert.equal(parentCount(wt, s1.snapshot), 1);
+  const s2 = await snapshot({ worktree: wt, base: f.base, prev: s1.snapshot });
+  assert.equal(parentCount(wt, s2.snapshot), 2);
+  assert.equal(g(wt, 'rev-parse', `${s2.snapshot}^1`), g(wt, 'rev-parse', 'HEAD'));
+  assert.equal(g(wt, 'rev-parse', `${s2.snapshot}^2`), s1.snapshot);
+  assert.equal(s2.same, true); // 트리·첫째 부모가 prev 와 같다
+  write(wt, 'y.txt', 'y\n');
+  assert.equal((await snapshot({ worktree: wt, base: f.base, prev: s1.snapshot })).same, false); // 트리가 다르다
+  g(wt, 'add', '.');
+  g(wt, 'commit', '-q', '-m', 'x');
+  assert.equal((await snapshot({ worktree: wt, base: f.base, prev: s1.snapshot })).same, false); // 첫째 부모(HEAD)가 다르다
+  const s3 = await snapshot({ worktree: wt, base: f.base, prev: '1'.repeat(40) });
+  assert.equal(s3.same, false);
+  assert.equal(parentCount(wt, s3.snapshot), 1);
+  assert.equal(g(wt, 'for-each-ref', 'refs/rooms'), '');
+});
+
+test('createBundle prev: 큰 바이너리가 이미 올라간 뒤 작은 수정은 바이너리보다 훨씬 작게 묶인다', async () => {
+  const f = setup();
+  const { wt } = f.mac('a');
+  big(wt);
+  g(wt, 'add', '.');
+  g(wt, 'commit', '-q', '-m', 'big');
+  write(wt, 'x.txt', 'x\n');
+  const p1 = await f.pack(wt);
+  assert.ok(p1.r.size > 4 * 1024 * 1024);
+  write(wt, 'a.txt', lines(7, { 1: 'A1' }));
+  const p2 = await f.pack(wt, p1.snapshot);
+  assert.equal(p2.r.ok, true);
+  assert.ok(p2.r.size < 10 * 1024, `증분 ${p2.r.size}`);
+  // 커밋 안 한 큰 파일도 한 번 올라간 뒤엔 다시 안 담긴다
+  big(wt, 'big2.bin', 2);
+  const p3 = await f.pack(wt, p2.snapshot);
+  assert.ok(p3.r.size > 2 * 1024 * 1024);
+  write(wt, 'x.txt', 'x2\n');
+  const p4 = await f.pack(wt, p3.snapshot);
+  assert.ok(p4.r.size < 10 * 1024, `증분 ${p4.r.size}`);
+  assert.equal(g(wt, 'for-each-ref', 'refs/rooms'), '');
+});
+
+test('applyParts: 조각 3개(전체→증분→증분)를 차례로 적용하면 마지막 상태와 같다, 이미 맞춘 사본엔 뒤 조각만 줘도 된다', async () => {
+  const f = setup();
+  const a = f.mac('a');
+  work(a.wt);
+  const p1 = await f.pack(a.wt);
+  fs.rmSync(path.join(a.wt, 'u.txt'));
+  write(a.wt, 'v.txt', 'v\n');
+  const p2 = await f.pack(a.wt, p1.snapshot);
+  write(a.wt, 'v.txt', 'v2\n');
+  g(a.wt, 'add', 'v.txt');
+  g(a.wt, 'commit', '-q', '-m', 'v'); // 커밋된 상태가 바뀐다
+  write(a.wt, 'w.txt', 'w\n');
+  const p3 = await f.pack(a.wt, p2.snapshot);
+  const same = (b) => {
+    assert.equal(g(b.wt, 'rev-parse', 'HEAD'), g(a.wt, 'rev-parse', 'HEAD'));
+    assert.equal(status(b.wt), status(a.wt));
+    g(b.wt, 'diff', '--cached', '--quiet');
+    for (const x of ['a.txt', 'c.txt', 'v.txt', 'w.txt']) assert.equal(read(b.wt, x), read(a.wt, x), x);
+    assert.equal(fs.existsSync(path.join(b.wt, 'u.txt')), false);
+  };
+
+  const b = f.mac('b');
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p1.file, p2.file, p3.file], snapshot: p3.snapshot }), { applied: true });
+  same(b);
+
+  const c = f.mac('c');
+  assert.deepEqual(await applyParts({ worktree: c.wt, files: [p1.file], snapshot: p1.snapshot }), { applied: true });
+  assert.deepEqual(await applyParts({ worktree: c.wt, files: [p2.file, p3.file], snapshot: p3.snapshot, lastApplied: p1.snapshot }), { applied: true });
+  same(c);
+});
+
+test('applyParts: 조각이 빠지면 MISSING_BASE 이고 사본은 그대로, 마지막 조각에 snapshot 이 없으면 BAD_BUNDLE', async () => {
+  const f = setup();
+  const a = f.mac('a');
+  write(a.wt, 'x.txt', 'x\n');
+  const p1 = await f.pack(a.wt);
+  write(a.wt, 'y.txt', 'y\n');
+  const p2 = await f.pack(a.wt, p1.snapshot);
+  write(a.wt, 'z.txt', 'z\n');
+  const p3 = await f.pack(a.wt, p2.snapshot);
+  const b = f.mac('b');
+  const [head, st] = [g(b.wt, 'rev-parse', 'HEAD'), status(b.wt)];
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p3.file], snapshot: p3.snapshot }), { applied: false, reason: 'MISSING_BASE' });
+  assert.deepEqual(await applyParts({ worktree: b.wt, files: [p1.file, p3.file], snapshot: p3.snapshot }), { applied: false, reason: 'MISSING_BASE' });
+  assert.equal(g(b.wt, 'rev-parse', 'HEAD'), head);
+  assert.equal(status(b.wt), st);
+  await assert.rejects(applyParts({ worktree: b.wt, files: [p1.file, p2.file], snapshot: p3.snapshot }), /BAD_BUNDLE/);
+});
+
+test('rebaseOnto prev: 새 기준 위로 옮긴 뒤 스냅샷도 증분 묶음이 작다', async () => {
+  const f = setup();
+  const { src, wt } = f.mac('a');
+  big(wt);
+  g(wt, 'add', '.');
+  g(wt, 'commit', '-q', '-m', 'big');
+  write(wt, 'x.txt', 'x\n');
+  const p1 = await f.pack(wt);
+  f.otherPush('b.txt', 'b-other\n');
+  g(src, 'fetch', '-q', 'origin');
+
+  const r = await rebaseOnto({ worktree: wt, base: f.base, newBase: 'origin/release/1.0', prev: p1.snapshot });
+  assert.equal(r.ok, true);
+  assert.equal(g(wt, 'rev-parse', `${r.snapshot}^2`), p1.snapshot);
+  const file = path.join(tmp, 'rebased.bundle');
+  const b = await createBundle({ worktree: wt, base: 'origin/release/1.0', prev: p1.snapshot, snapshot: r.snapshot, file });
+  assert.equal(b.ok, true);
+  assert.ok(b.size < 10 * 1024, `증분 ${b.size}`);
 });

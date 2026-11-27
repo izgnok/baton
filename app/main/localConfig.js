@@ -15,7 +15,7 @@ const defaults = () => ({ serverUrl: null, token: null, rooms: {} });
 /**
  * 로컬 설정 읽기. 없거나 깨졌으면 기본값
  * @returns {{serverUrl: string|null, token: string|null, rooms: Record<string, {repos: Record<string, string>, readDirs?: string[], model?: string, effort?: string,
- *     pendingBranches?: Record<string, string>}>,
+ *     code?: Record<string, string>}>,
  *   repoIndex?: {scannedAt: number, repos: {path: string, name: string, remoteUrl: string}[]},
  *   usage?: {fiveHour?: object, sevenDay?: object, updatedAt: number}}}
  */
@@ -80,11 +80,12 @@ export function setRoomModel(cfg, roomId, model, effort) {
   return { ...cfg, rooms: { ...cfg.rooms, [roomId]: { ...room, repos: room.repos ?? {}, model: model || '', effort: effort || '' } } };
 }
 
-/** 방의 대기 브랜치(레포 id → 아직 원격에 없는 브랜치. 이 맥에서만)를 넣은 새 설정. 비면 키를 지운다 */
-export function setPendingBranches(cfg, roomId, pendingBranches) {
-  const { pendingBranches: _old, ...room } = cfg.rooms[roomId] ?? { repos: {} };
-  const next = Object.keys(pendingBranches).length ? { ...room, pendingBranches } : room;
-  return { ...cfg, rooms: { ...cfg.rooms, [roomId]: next } };
+/** 방 레포 사본이 마지막으로 맞춰진 서버 스냅샷(레포 id → 커밋 id)을 넣은 새 설정. null 이면 그 레포 키를 지우고, 비면 code 도 지운다 */
+export function setCodeApplied(cfg, roomId, repoId, snapshot) {
+  const { code: old, ...room } = cfg.rooms[roomId] ?? { repos: {} };
+  const { [repoId]: _drop, ...rest } = old ?? {};
+  const code = snapshot ? { ...rest, [repoId]: snapshot } : rest;
+  return { ...cfg, rooms: { ...cfg.rooms, [roomId]: Object.keys(code).length ? { ...room, code } : room } };
 }
 
 /** 실행 때 쓸 모델·노력: 개인 선택 → 방 기본 → 없음(내 Claude 설정). 각각 따로 정한다 */

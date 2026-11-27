@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { startApprovalBridge } from '../main/runner/approve.js';
+import { startApprovalBridge, ROOM_TOOLS } from '../main/runner/approve.js';
 
 // 설정 파일의 command/args/env 그대로 approveMcp 에 붙어 approve 를 한 번 호출한다
 async function callApprove(mcpConfigPath, args) {
@@ -76,4 +76,66 @@ test('다리가 닫힌 뒤에는 연결 실패 메시지로 deny', async () => {
   try {
     assert.deepEqual(await callApprove(file, call), { behavior: 'deny', message: '승인 창에 연결하지 못했습니다' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 방 도구(/tool) ----
+function secretOf(bridge) {
+  return JSON.parse(fs.readFileSync(bridge.mcpConfigPath, 'utf8')).mcpServers.rooms.env.ROOMS_APPROVE_SECRET;
+}
+async function tool(bridge, body) {
+  const r = await fetch(`http://127.0.0.1:${bridge.port}/tool`, {
+    method: 'POST', body: JSON.stringify(body), headers: { 'x-rooms-secret': secretOf(bridge) },
+  });
+  return { status: r.status, json: await r.json() };
+}
+
+test('/tool: 비밀값 없으면 403', async () => {
+  const bridge = await startApprovalBridge({ askUser: async () => 'allow', onTool: async () => 'x' });
+  try {
+    const url = `http://127.0.0.1:${bridge.port}/tool`;
+    assert.equal((await fetch(url, { method: 'POST', body: '{}' })).status, 403);
+    assert.equal((await fetch(url, { method: 'POST', body: '{}', headers: { 'x-rooms-secret': 'wrong' } })).status, 403);
+  } finally { await bridge.close(); }
+});
+
+test('/tool: onTool 결과·throw·미지정·모르는 이름', async () => {
+  const seen = [];
+  const bridge = await startApprovalBridge({
+    askUser: async () => 'allow',
+    onTool: async (name, input) => { seen.push([name, input]); if (input.boom) throw new Error('실패했어요'); return '결과 본문'; },
+  });
+  try {
+    assert.deepEqual((await tool(bridge, { name: 'room_repos', input: { a: 1 } })).json, { ok: true, text: '결과 본문' });
+    assert.deepEqual(seen, [['room_repos', { a: 1 }]]);
+    assert.deepEqual((await tool(bridge, { name: 'room_repos', input: { boom: 1 } })).json, { ok: false, error: '실패했어요' });
+    assert.deepEqual((await tool(bridge, { name: 'rm_rf', input: {} })).json, { ok: false, error: 'UNKNOWN_TOOL' });
+  } finally { await bridge.close(); }
+  const bare = await startApprovalBridge({ askUser: async () => 'allow' });
+  try {
+    assert.deepEqual((await tool(bare, { name: 'room_repos', input: {} })).json, { ok: false, error: '이 실행에서는 방 도구를 쓸 수 없어요' });
+  } finally { await bare.close(); }
+});
+
+test('MCP: 방 도구 7개가 보이고 호출이 onTool 에 그대로 닿는다', async () => {
+  const seen = [];
+  const bridge = await startApprovalBridge({
+    askUser: async () => 'allow',
+    onTool: async (name, input) => { seen.push([name, input]); if (input.repoId === 9) throw new Error('없는 레포'); return `${name} 완료`; },
+  });
+  const { command, args, env } = JSON.parse(fs.readFileSync(bridge.mcpConfigPath, 'utf8')).mcpServers.rooms;
+  const client = new Client({ name: 'test', version: '0' });
+  await client.connect(new StdioClientTransport({ command, args, env: { ...process.env, ...env } }));
+  try {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    for (const n of ROOM_TOOLS) assert.ok(names.includes(n), n);
+    assert.equal(ROOM_TOOLS.length, 7);
+    const input = { remoteUrl: 'git@x.com:a/b.git', baseBranch: 'main' };
+    const ok = await client.callTool({ name: 'room_set_repo', arguments: input });
+    assert.deepEqual(seen, [['room_set_repo', input]]);
+    assert.equal(ok.isError, undefined);
+    assert.equal(ok.content[0].text, 'room_set_repo 완료');
+    const bad = await client.callTool({ name: 'room_remove_repo', arguments: { repoId: 9 } });
+    assert.equal(bad.isError, true);
+    assert.equal(bad.content[0].text, '없는 레포');
+  } finally { await client.close(); await bridge.close(); }
 });

@@ -320,31 +320,6 @@ export function removeRoomRepo(db, roomId, repoId) {
   if (!r.changes) throw new Error('INVALID_INPUT');
 }
 
-/**
- * 실행 중 Claude 가 옮긴 레포 브랜치 검사(요청자 확인은 호출부). 이 방 레포가 아니거나 이름이 잘못이면 INVALID_INPUT
- * 이름 규칙은 addRepo·updateRepo 와 같고(공백 제거·빈 값 금지), 다른 사람 맥에서 git 옵션으로 읽히지 않게 - 로 시작하는 것만 더 막는다
- * @returns {{id: number, branch: string}[]}
- */
-export function checkRunBranches(db, roomId, list) {
-  if (!Array.isArray(list)) throw new Error('INVALID_INPUT');
-  return list.map((c) => {
-    if (!c || typeof c.branch !== 'string') throw new Error('INVALID_INPUT');
-    const branch = text(c.branch);
-    const row = db.prepare('SELECT id FROM room_repos WHERE id = ? AND room_id = ?').get(Number(c.repoId), roomId);
-    if (!row || branch.startsWith('-')) throw new Error('INVALID_INPUT');
-    return { id: row.id, branch };
-  });
-}
-
-/**
- * checkRunBranches 를 통과한 값을 반영한다(방장 검사 없음. 호출부의 트랜잭션 안에서 쓴다).
- * 기준이 바뀐 레포는 코드 상태를 비운다
- * @returns {number[]} 코드 상태를 비운 레포 id(조각 파일 삭제·알림은 호출부 몫)
- */
-export function setRunBranches(db, list) {
-  return list.filter(({ id, branch }) => resetBase(db, id, branch)).map((c) => c.id);
-}
-
 const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const UPLOAD_ID = /^[0-9a-f]{16,64}$/;
 const num = (v) => {

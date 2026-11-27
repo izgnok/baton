@@ -67,7 +67,7 @@ export async function cloneRepo({ remoteUrl, branch, name }) {
 
 /**
  * 방 레포 전체 점검(병렬). 하나라도 block 이면 ok=false
- * @param {{id: number, name: string, remoteUrl: string, branch: string}[]} repos
+ * @param {{id: number, name: string, remoteUrl: string}[]} repos
  * @param {Record<string, string>} roomRepoPaths repoId → 로컬 경로
  */
 export async function preflight(repos, roomRepoPaths = {}) {
