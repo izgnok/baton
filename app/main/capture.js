@@ -1,10 +1,13 @@
-// 화면 캡처 모드(ROOMS_SCREENSHOT=<폴더>). 임시 서버·가짜 데이터로 화면을 PNG 로 남긴다
+// 화면 캡처 모드(ROOMS_SCREENSHOT=<폴더>). 임시 서버·가짜 데이터로 "찍을 장면"을 차례로 만들고,
+// 그리는 일은 밖(shoot)이 맡는다. 장면 = { name, view, opts, dark, ui }
+//   opts: 화면 전환 인자(window.__debug.go 와 같다), dark: 다크로 찍는지
+//   ui: { codeDiffOpen?: boolean, scrollTo?: 'top'|'codeCard', composer?: string } — 같은 화면에서 이어 찍을 때 바뀐 것만 적는다
+// 앞 장면과 view·opts·dark 가 같으면 shoot 은 화면을 다시 열지 않고 상태를 이어 간다
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { nativeTheme } from 'electron';
 import { MSG } from '@rooms/shared/protocol.js';
 import { createServerClient, signup } from './serverClient.js';
 import { saveConfig } from './localConfig.js';
@@ -99,27 +102,18 @@ export async function startCapture(outDir) {
   const clients = [];
   let hb = null;
 
-  async function run({ handlers, getWin, toRenderer, getClient }) {
-    const js = (code) => getWin().webContents.executeJavaScript(code);
-    const shot = async (name) => {
-      await sleep(500);
-      await js('document.fonts.ready.then(() => true)');
-      fs.writeFileSync(path.join(outDir, `${name}.png`), (await getWin().webContents.capturePage()).toPNG());
-    };
-    const go = async (view, opts = {}) => { await js(`window.__debug.go(${JSON.stringify(view)}, ${JSON.stringify(opts)})`); };
+  async function run({ handlers, emit, getClient, shoot }) {
     const waitFor = async (fn, what) => {
       for (let i = 0; i < 100; i++) { if (await fn()) return; await sleep(100); }
       throw new Error(`대기 시간 초과: ${what}`);
     };
+    const scene = (name, view, opts = {}, ui = {}, dark = false) => ({ name, view, opts, dark, ui });
 
-    nativeTheme.themeSource = 'light'; // 라이트 장면은 OS 설정과 상관없이 라이트로
-    await waitFor(() => js('!!window.__debug'), '화면 로드');
     await handlers.logout(); // 로그아웃 상태에서 시작(env 로 받은 폴더에 예전 로그인이 있을 수 있다)
-    await go('login', { serverUrl: url });
-    await shot('01-login');
+    await shoot(scene('01-login', 'login', { serverUrl: url }));
 
-    // 사용자 A 는 앱 화면 API 로 가입한다
-    await js(`window.rooms.signup(${JSON.stringify({ serverUrl: url, email: 'jihwan@example.com', password: 'password1', name: '지환' })})`);
+    // 사용자 A 는 앱 처리기로 가입한다
+    await handlers.signup({ serverUrl: url, email: 'jihwan@example.com', password: 'password1', name: '지환' });
     await waitFor(() => getClient()?.connected, 'A 연결');
 
     // 사용자 B 는 스크립트 클라이언트
@@ -222,83 +216,52 @@ export async function startCapture(outDir) {
     await sleep(300);
 
     const room03 = { roomId, tab: 'shared' };
-    const settle = () => sleep(1200); // 레포 점검·목록 불러오기
     const now = Date.now();
-    toRenderer('usage', {
+    emit('usage', {
       fiveHour: { utilization: 0.21, resetsAt: now + 3 * 3600 * 1000, status: 'allowed' },
       sevenDay: { utilization: 0.83, resetsAt: now + 2 * 24 * 3600 * 1000, status: 'allowed_warning' },
       updatedAt: now - 5 * 60 * 1000,
     });
     const lightDark = async (suffix) => {
-      await go('rooms');
-      await shot(`02-rooms${suffix}`);
-      await go('room', room03);
-      await b.request(MSG.RUN_APPROVAL, { requestId: runningId, state: 'pending', toolName: 'Bash' }); // 방을 연 뒤에 온 알림
-      await settle();
-      await shot(`03-room-chat${suffix}`);
-      // Claude 답(모델 표시)과 바뀐 코드 카드가 보이게 위로 스크롤하고, diff 를 펼쳐 둔다
-      await js(`(() => { const d = document.querySelector('.code-diff-box'); if (d) d.open = true; })()`);
-      await sleep(100);
-      await js(`(() => { const m = document.querySelector('.messages'); const c = document.querySelector('.code-card'); m.scrollTop += c.getBoundingClientRect().bottom - m.getBoundingClientRect().bottom + 40; })()`);
-      await shot(`03b-room-code${suffix}`);
-      await js(`(() => { const d = document.querySelector('.code-diff-box'); if (d) d.open = false; })()`);
-      await js(`document.querySelector('.messages').scrollTop = 0`); // 사람별 색이 보이는 맨 위
-      await shot(`03c-room-people${suffix}`);
-      toRenderer('approval:ask', {
+      const dark = !!suffix;
+      const sc = (name, view, opts, ui) => scene(`${name}${suffix}`, view, opts, ui, dark);
+      await shoot(sc('02-rooms', 'rooms'));
+      // 승인 대기 알림은 방 화면이 열린 뒤에 와야 보인다(방 화면이 열리는 동안 보낸다)
+      const chat = shoot(sc('03-room-chat', 'room', room03));
+      await sleep(300);
+      await b.request(MSG.RUN_APPROVAL, { requestId: runningId, state: 'pending', toolName: 'Bash' });
+      await chat;
+      // Claude 답(모델 표시)과 바뀐 코드 카드가 보이게 diff 를 펼치고 스크롤
+      await shoot(sc('03b-room-code', 'room', room03, { codeDiffOpen: true, scrollTo: 'codeCard' }));
+      await shoot(sc('03c-room-people', 'room', room03, { codeDiffOpen: false, scrollTo: 'top' })); // 사람별 색이 보이는 맨 위
+      emit('approval:ask', {
         id: 'capture', requestId: runningId, roomId, toolName: 'Write',
         input: { file_path: '/Users/hana/claude-rooms/1/shared/outputs/재시도-정책.md', content: `# 재시도 정책 초안\n\n${'- 실패 시 지수 백오프로 최대 3회 재시도\n'.repeat(60)}` },
       });
-      await shot(`08-approval${suffix}`);
-      toRenderer('approval:close', { requestId: runningId });
+      await shoot(sc('08-approval', 'room', room03));
+      emit('approval:close', { requestId: runningId });
     };
 
     await lightDark('');
-    await go('room', { roomId, tab: 'repos' });
-    await settle();
-    await shot('04-room-repos');
-    // 미리보기는 파일을 받아 온 뒤 시트가 올라온다. 앞 시트가 닫히는 애니메이션이 끝날 때까지 기다린다
-    await go('room', { roomId, tab: 'shared', preview: 'outputs/정리.md' });
-    await settle();
-    await sleep(800);
-    await shot('05-shared-md');
-    await go('room', { roomId, tab: 'shared', preview: 'outputs/report.html' });
-    await settle();
-    await sleep(800);
-    await shot('06-shared-html');
-    await go('room', { roomId, tab: 'members' });
-    await settle();
-    await shot('07-members');
+    const at = (tab, extra = {}) => ({ roomId, tab, ...extra });
+    await shoot(scene('04-room-repos', 'room', at('repos')));
+    await shoot(scene('05-shared-md', 'room', at('shared', { preview: 'outputs/정리.md' })));
+    await shoot(scene('06-shared-html', 'room', at('shared', { preview: 'outputs/report.html' })));
+    await shoot(scene('07-members', 'room', at('members')));
 
     // 자동완성 팝업: / 로 명령·스킬, @ 로 멤버·파일
-    const typeInto = (t) => js(`(() => { const i = document.querySelector('.composer textarea'); i.focus(); i.value = ${JSON.stringify(t)}; i.setSelectionRange(i.value.length, i.value.length); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    await go('room', { roomId, tab: 'repos' });
-    await settle();
-    await typeInto('/');
-    await sleep(300);
-    await shot('09-autocomplete');
-    await typeInto('@ti');
-    await sleep(700); // 레포 파일 검색(200ms 디바운스)
-    await shot('09b-autocomplete-mention');
-    await typeInto('');
+    await shoot(scene('09-autocomplete', 'room', at('repos'), { composer: '/' }));
+    await shoot(scene('09b-autocomplete-mention', 'room', at('repos'), { composer: '@ti' }));
 
     // 업데이트 띠(가짜 알림)
-    toRenderer('update', { count: 3, subjects: ['방 목록에 사용량 막대', '입력창 자동완성', '서버 자동 재시작'], serverMismatch: true });
-    await sleep(300);
-    await shot('10-update');
-    toRenderer('update', { count: 0, subjects: [], serverMismatch: false });
+    emit('update', { count: 3, subjects: ['방 목록에 사용량 막대', '입력창 자동완성', '서버 자동 재시작'], serverMismatch: true });
+    await shoot(scene('10-update', 'room', at('repos'), { composer: '' }));
+    emit('update', { count: 0, subjects: [], serverMismatch: false });
 
-    nativeTheme.themeSource = 'dark';
-    await sleep(300);
     await lightDark('-dark');
-    await go('room', { roomId, tab: 'repos' });
-    await settle();
-    await shot('04-room-repos-dark');
-    await go('room', { roomId, tab: 'members' });
-    await settle();
-    await shot('07-members-dark');
-    await typeInto('/');
-    await sleep(300);
-    await shot('09-autocomplete-dark');
+    await shoot(scene('04-room-repos-dark', 'room', at('repos'), {}, true));
+    await shoot(scene('07-members-dark', 'room', at('members'), {}, true));
+    await shoot(scene('09-autocomplete-dark', 'room', at('members'), { composer: '/' }, true));
   }
 
   async function cleanup() {

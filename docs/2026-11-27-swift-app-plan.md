@@ -17,8 +17,7 @@
 - 코어 stdout 은 통신 전용. 로그는 stderr.
 - 최소 macOS 14, 빌드는 `swift build`(Xcode 금지), 번들 ID `dev.claude-rooms.app`, 실행 파일 이름 `ClaudeRooms`, 설치 위치 `~/Applications/Claude Rooms.app`.
 - 공개 레포: 회사 이름·사내 주소·계정 정보를 코드·테스트·문서에 넣지 않는다.
-- 화면 문구는 지금 Electron 화면의 한국어 문구를 그대로 쓴다(`app/renderer/**`).
-- 색·간격·글꼴은 `app/renderer/tokens.css`·`app.css` 값을 옮긴다. 글꼴 Pretendard(Regular·Medium·SemiBold·Bold OTF).
+- 화면 문구·색·간격·버튼 크기는 Task 4b 의 UI 점검표(`docs/2026-11-27-ui-review.md`)에서 정한 기준을 따른다. 점검표에 없는 것은 지금 Electron 화면(`app/renderer/**`, `tokens.css`·`app.css`)을 따른다. 글꼴 Pretendard(Regular·Medium·SemiBold·Bold OTF).
 - 단계마다 `npm test`(서버·앱)와 `swift test` 가 통과해야 커밋한다.
 
 ## Review Focus
@@ -135,6 +134,19 @@
 - [ ] **Step 4:** `swift test` 통과
 - [ ] **Step 5:** 사용자 확인 뒤 커밋 `feat: Swift 패키지와 코어 클라이언트`
 
+### Task 4b: UI/UX 점검표
+
+**Files:**
+- Create: `docs/2026-11-27-ui-review.md`
+
+**내용:** 지금 캡처 21장(`docs/screens-2026-11-26/`)과 화면 코드를 화면별로 훑어 문제를 적고, 고칠 방안을 **제안**으로 적는다(사용자가 정하기 전까지 확정 아님).
+- 점검 기준: 설명글 길이(한 줄 안팎으로), 버튼 크기·모양 일관성(크기 단계 정의 — 예: 큰 버튼/보통/작은 텍스트 버튼), 글자 크기·대비·줄 간격(가독성), 정보 위계(제목·본문·보조 글), 직관성(무엇을 누르면 무엇이 되는지, 상태가 한눈에 보이는지), 빈 상태·오류 문구, 다크 모드 대비.
+- 결과물: ① 화면별 문제와 제안 표 ② 공통 기준(글자 크기 단계, 버튼 크기 단계, 간격 단위, 색 역할) ③ 바꿀 문구 목록(지금 → 제안).
+
+- [ ] **Step 1:** 점검표 작성(위임 가능 — 단, 공통 기준은 메인이 정리)
+- [ ] **Step 2:** 사용자 검토 — 채택·수정·제외를 표에 적는다
+- [ ] **Step 3:** 사용자 확인 뒤 커밋 `docs: UI/UX 점검표`
+
 ### Task 5: 앱 뼈대·빌드 스크립트·로그인·방 목록·캡처 처리
 
 **Files:**
@@ -150,6 +162,8 @@
   - `Format`(RoomsKit) — `format.js` 의 `formatTime`, `formatDate`, `usageLabel`, `usageWarn`, `usageChecked`, `modelLabel`, `effortLabel`, `memberSummary`, `personIndex`, `initial`, `errorText`, `failText`, `STATUS_TEXT` 를 같은 결과로. 테스트는 `app/test/format.test.js` 의 기대값을 그대로 옮긴다
   - `build.sh` — `swift build -c release --package-path mac` → `Claude Rooms.app/Contents/{MacOS/ClaudeRooms, Info.plist, Resources/Fonts/*.otf}` 조립 → `~/Applications` 로 교체. Info.plist: `CFBundleName`=Claude Rooms, `CFBundleIdentifier`=dev.claude-rooms.app, `CFBundleExecutable`=ClaudeRooms, `LSMinimumSystemVersion`=14.0, `RoomsSource`=레포 절대 경로, `RoomsCommit`=짧은 HEAD. 아이콘은 이번 계획에서 제외(기본 아이콘)
   - 캡처: 환경 변수 `ROOMS_SCREENSHOT` 이면 코어에 그대로 넘기고, `capture:shot` 마다 `screen`·다크 모드를 맞추고 0.5초 뒤 창 내용을 PNG(`<폴더>/<name>.png`, 1100×728)로 저장 → `captureAck`. `capture:done` 이면 종료(실패면 코드 1)
+    - 앞 장면과 `view`·`opts`·`dark` 가 같으면 화면을 다시 열지 않고 `ui`(codeDiffOpen·scrollTo·composer)만 적용한다(Electron `createShoot` 와 같은 규칙, `capture.js` 맨 위 주석)
+    - 승인 대기 알림(`run.approval pending`)은 방 화면이 열리는 중(약 300ms 뒤)에 올 수 있다 → 방 화면이 만들어지기 전에 온 `rooms:event` 도 놓치지 않게 AppModel 이 방별로 받아 두었다가 RoomModel 에 넘긴다(Task 6)
 
 - [ ] **Step 1: 테스트** — `FormatTests`(format.test.js 기대값 그대로)
 - [ ] **Step 2:** `swift test` 실패 확인

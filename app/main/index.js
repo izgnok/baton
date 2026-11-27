@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fixPath } from './env.js';
@@ -42,6 +43,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: !process.env.ROOMS_SCREENSHOT, // 캡처 중 창이 가려져도 그리기를 멈추지 않는다
       preload: path.join(here, 'preload.cjs'),
     },
   });
@@ -54,6 +56,44 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(here, '..', 'renderer', 'index.html'));
   win.on('closed', () => { win = null; });
+}
+
+// 캡처 장면 하나를 그려 <outDir>/<name>.png 로 저장한다. 앞 장면과 같은 화면이면 다시 열지 않고 상태를 이어 간다
+function createShoot(outDir) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const js = (code) => win.webContents.executeJavaScript(code);
+  let loaded = false;
+  let prevKey = null;
+  return async (scene) => {
+    if (!loaded) {
+      for (let i = 0; i < 100 && !(await js('!!window.__debug')); i++) await sleep(100);
+      loaded = true;
+    }
+    const { name, view, opts, dark, ui = {} } = scene;
+    nativeTheme.themeSource = dark ? 'dark' : 'light'; // OS 설정과 상관없이
+    const key = JSON.stringify([view, opts, dark]);
+    if (key !== prevKey) {
+      prevKey = key;
+      await js(`window.__debug.go(${JSON.stringify(view)}, ${JSON.stringify(opts)})`);
+      if (view === 'room') await sleep(1200 + (opts.preview ? 800 : 0)); // 레포 점검·목록·미리보기 불러오기
+    }
+    if (ui.codeDiffOpen !== undefined) {
+      await js(`(() => { const d = document.querySelector('.code-diff-box'); if (d) d.open = ${ui.codeDiffOpen}; })()`);
+      await sleep(100);
+    }
+    if (ui.scrollTo === 'codeCard') {
+      await js(`(() => { const m = document.querySelector('.messages'); const c = document.querySelector('.code-card'); m.scrollTop += c.getBoundingClientRect().bottom - m.getBoundingClientRect().bottom + 40; })()`);
+    } else if (ui.scrollTo === 'top') {
+      await js(`document.querySelector('.messages').scrollTop = 0`);
+    }
+    if (ui.composer !== undefined) {
+      await js(`(() => { const i = document.querySelector('.composer textarea'); i.focus(); i.value = ${JSON.stringify(ui.composer)}; i.setSelectionRange(i.value.length, i.value.length); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await sleep(700); // 레포 파일 검색(200ms 디바운스)
+    }
+    await sleep(500);
+    await js('document.fonts.ready.then(() => true)');
+    fs.writeFileSync(path.join(outDir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  };
 }
 
 app.on('before-quit', () => service.stop());
@@ -79,7 +119,7 @@ async function main() {
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   if (cap) {
     const timer = setTimeout(() => { console.error('CAPTURE_TIMEOUT'); app.exit(1); }, 120000);
-    const ok = await cap.run({ handlers, getWin: () => win, toRenderer, getClient: service.getClient })
+    const ok = await cap.run({ handlers, emit: toRenderer, getClient: service.getClient, shoot: createShoot(process.env.ROOMS_SCREENSHOT) })
       .then(() => true, (e) => { console.error(e); return false; });
     clearTimeout(timer);
     await cap.cleanup();
