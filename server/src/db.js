@@ -35,7 +35,27 @@ CREATE TABLE IF NOT EXISTS room_repos (
   room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   remote_url TEXT NOT NULL,
-  branch TEXT NOT NULL
+  base_branch TEXT NOT NULL,
+  work_branch TEXT NOT NULL DEFAULT '',
+  origin_branch TEXT
+);
+CREATE TABLE IF NOT EXISTS code_states (
+  repo_id INTEGER PRIMARY KEY REFERENCES room_repos(id) ON DELETE CASCADE,
+  base_commit TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS code_parts (
+  repo_id INTEGER NOT NULL REFERENCES room_repos(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  prev_snapshot TEXT,
+  snapshot TEXT NOT NULL,
+  base_commit TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (repo_id, seq)
 );
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,5 +90,11 @@ export function openDb(path) {
   for (const col of ['is_public INTEGER NOT NULL DEFAULT 1', 'fork_pending INTEGER NOT NULL DEFAULT 0']) {
     if (!have.has(col.split(' ')[0])) db.exec(`ALTER TABLE rooms ADD COLUMN ${col}`);
   }
+  // 레포: branch → base_branch 로 이름을 바꾸고 work_branch·origin_branch 를 덧붙인다(옛 행의 origin_branch 는 기준과 같게)
+  const repoCols = new Set(db.prepare('PRAGMA table_info(room_repos)').all().map((c) => c.name));
+  if (repoCols.has('branch') && !repoCols.has('base_branch')) db.exec('ALTER TABLE room_repos RENAME COLUMN branch TO base_branch');
+  if (!repoCols.has('work_branch')) db.exec("ALTER TABLE room_repos ADD COLUMN work_branch TEXT NOT NULL DEFAULT ''");
+  if (!repoCols.has('origin_branch')) db.exec('ALTER TABLE room_repos ADD COLUMN origin_branch TEXT');
+  db.exec('UPDATE room_repos SET origin_branch = base_branch WHERE origin_branch IS NULL');
   return db;
 }

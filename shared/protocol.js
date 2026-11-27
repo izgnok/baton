@@ -33,6 +33,9 @@ export const MSG = Object.freeze({
   ROOMS_CHANGED: 'rooms.changed', // 공개 방 목록이 바뀌었으니 다시 불러오라는 알림
   SHARED_PUT: 'shared.put', // 사람이 직접 고친 공유 파일 올리기
   SHARED_CHANGED: 'shared.changed', // 공유 파일이 바뀌었다는 알림
+  ROOM_REPO_SET: 'room.repo_set', // 실행 중 Claude 의 방 도구: 레포 추가·기준/작업 브랜치 변경
+  ROOM_REPO_REMOVE: 'room.repo_remove', // 실행 중 Claude 의 방 도구: 레포 빼기
+  CODE_CHANGED: 'code.changed', // 레포의 공유 사본(코드 상태)이 바뀌었다는 알림
 });
 
 const MENTION = /^\s*@claude(?=\s|$)/i;

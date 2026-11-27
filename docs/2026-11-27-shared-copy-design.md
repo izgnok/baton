@@ -14,7 +14,7 @@
 | U6 | 다들 **자동으로 받는다**: 누가 사본을 바꾸면 모두의 사본이 곧바로 맞춰지고, 기준 브랜치에 남이 push 한 것도 자동으로 따라간다 |
 | U7 | 레포·기준·작업 브랜치는 **채팅으로 정한다**: Claude 가 "어떤 브랜치에서 시작할까요?"처럼 묻고 방 설정을 만든다. 화면에서 레포를 직접 연결하는 일은 없앤다 |
 | U8 | 레포 카드는 **레포 이름과 브랜치만** 보여 준다("방에서 정한 브랜치 · 아직 원격에 없음" 같은 설명은 넣지 않음) |
-| U9 | 묶음(아래 3.3)이 50MB 를 넘으면 공유하지 않고 push 를 안내한다 |
+| U9 | 묶음(아래 3.3)은 크기와 상관없이 공유한다(크면 느려지는 것은 감수). HTTP 로 흘려 올리고, 사고 방지용 상한 2GB 만 둔다. 스냅샷이 서버 것과 같으면 올리지 않고, 다르면 **지난번 스냅샷 이후 바뀐 것만** 올린다(증분 조각, 아래 3.3) (11-27 수정 — 처음엔 50MB 상한) |
 | U10 | 방 도구로 레포를 바꾸는 것은 멤버 누구의 요청이든 된다(요청한 사람 맥의 승인 창을 거침) |
 | U11 | 사본을 직접 고친 맥에는 다른 사람 변경을 맞추지 않고, 그 사람의 다음 실행에 함께 올린다 |
 | U12 | 화면에서 레포를 다루는 버튼은 **완전히 없앤다**. 레포 카드는 표시만, 추가·수정·빼기·폴더 열기 모두 채팅으로 |
@@ -67,8 +67,8 @@ Claude 에게 주는 방 도구(기존 승인 MCP 서버 `rooms` 에 추가):
 3. Claude 실행(작업 폴더 = 사본).
 
 실행 뒤(요청한 맥):
-4. 사본의 상태를 스냅샷으로 만든다 — 임시 인덱스(`GIT_INDEX_FILE`)에 `git add -A` → `write-tree` → `commit-tree -p HEAD`(커밋 안 한 변경까지 담은 커밋, 부모 = 지금 HEAD). 작업 폴더·실제 인덱스는 건드리지 않는다.
-5. `git bundle create <file> <baseCommit>..<snapshot>` → 크기가 50MB 이하면 RUN_FINISH 와 함께 올린다(`codeStates: [{ repoId, baseCommit, snapshot, bundleBase64 }]`). 넘으면 올리지 않고 채팅에 "변경이 커서 공유하지 못했어요 · push 해 주세요".
+4. 사본의 상태를 스냅샷으로 만든다 — 임시 인덱스(`GIT_INDEX_FILE`)에 `git add -A` → `write-tree` → `commit-tree -p HEAD -p <이전 스냅샷>`(커밋 안 한 변경까지 담은 커밋, 첫째 부모 = 지금 HEAD, 둘째 부모 = 서버의 지금 스냅샷 — 있을 때만). 작업 폴더·실제 인덱스는 건드리지 않는다. 둘째 부모 덕분에 묶음에서 이전 스냅샷이 가진 파일 내용이 빠진다.
+5. 스냅샷이 서버 코드 상태와 같으면 건너뛴다. 다르면 `git bundle create <file> <snapshot> ^<이전 스냅샷> ^<baseCommit>`(이전 스냅샷이 없으면 `^<baseCommit>` 만) → `PUT /rooms/:id/code-upload?requestId=` 로 흘려 올려 `uploadId` 를 받고, RUN_FINISH 에 `codeStates: [{ repoId, baseBranch, baseCommit, snapshot, prevSnapshot, uploadId }]` 로 붙인다. 서버는 레포마다 조각을 차례(seq)로 쌓고(prevSnapshot 이 null 이면 새로 시작), 기준 브랜치가 바뀌거나 push 로 승격되면 조각을 모두 지운다. 받는 맥은 마지막으로 맞춘 스냅샷 다음 조각들을 차례로 `git fetch` 한다(새 멤버는 처음부터). 조각이 100개를 넘으면 앱이 prevSnapshot 없이 한 번 통째로 올려 체인을 새로 시작한다. 2GB 를 넘으면 그 레포만 올리지 않고 채팅에 "변경이 너무 커서 공유하지 못했어요 · push 해 주세요".
 6. 서버는 코드 상태를 바꾸고(트랜잭션 — 공유 파일·대화 원본과 함께) 방 멤버에게 `code.changed` 를 알린다.
 
 맞추기(모든 맥, 실행 전 + `code.changed` 를 받을 때 곧바로):
@@ -97,14 +97,15 @@ Claude 에게 주는 방 도구(기존 승인 MCP 서버 `rooms` 에 추가):
 ## 5. 서버·데이터
 
 - `room_repos`: `branch` → `base_branch`(기존 값 옮김), `work_branch` 추가(기존은 비어 있음), `origin_branch`(처음 정한 기준, U16) 추가.
-- 새 테이블 `code_states(repo_id PK, base_commit, snapshot, size, updated_by, updated_at)`, 묶음 파일은 `data/rooms/<방>/code/<repo_id>.bundle`.
-- 새 메시지: 방 도구용 `ROOM_REPO_SET`·`ROOM_REPO_REMOVE`(멤버 누구나, 실행 중 요청의 요청자만 — 실행과 묶어 검사), 알림 `CODE_CHANGED { roomId, repoId }`, 묶음 받기 HTTP `GET /rooms/:id/code/:repoId`(멤버만).
-- RUN_FINISH 에 `codeStates` 추가. 크기·형식 검사(50MB, base64).
+- 새 테이블 `code_states(repo_id PK, base_commit, snapshot, size, updated_by, updated_at)`(최신 요약)와 `code_parts(repo_id, seq, prev_snapshot, snapshot, base_commit, size, created_at)`(증분 조각), 조각 파일은 `data/rooms/<방>/code/<repo_id>-<seq>.bundle`.
+- 새 메시지: 방 도구용 `ROOM_REPO_SET`·`ROOM_REPO_REMOVE`(멤버 누구나, 실행 중 요청의 요청자만 — 실행과 묶어 검사), 알림 `CODE_CHANGED { roomId, repoId }`, 조각 목록 `GET /rooms/:id/code/:repoId`·조각 받기 `GET /rooms/:id/code/:repoId/:seq`(멤버만).
+- 묶음 올리기 HTTP `PUT /rooms/:id/code-upload?requestId=`(실행 중 요청의 요청자만, 스트림으로 임시 파일 `code/.upload-*`, 2GB 상한, git bundle 머리 검사) → `uploadId`. RUN_FINISH 의 `codeStates` 가 `uploadId` 를 가리키면 그 파일을 `<repo_id>.bundle` 로 옮긴다. 서버 시작 때 남은 임시 파일은 지운다.
+- RUN_FINISH 에 `promotedRepoIds`(push 로 작업 브랜치가 원격에 생긴 레포 → 기준 = 작업, 작업 = 비움).
 - 방 삭제·레포 빼기 때 묶음 파일도 지운다. fork 는 코드 상태도 복사한다.
 
 ## 6. 검증
 
-- 코어(Node, 임시 git 레포 + bare origin): 스냅샷 만들기(새 파일·삭제·커밋 안 한 변경 포함, 실제 인덱스 불변) / 묶음 → 다른 사본에 맞추기(커밋·미커밋 구분 유지) / 기준 브랜치가 앞서면 rebase, 충돌이면 멈춤 / 50MB 넘으면 안 올림 / push 뒤 기준 브랜치 = 작업 브랜치 / 직접 고친 사본은 맞추지 않음.
+- 코어(Node, 임시 git 레포 + bare origin): 스냅샷 만들기(새 파일·삭제·커밋 안 한 변경 포함, 실제 인덱스 불변) / 묶음 → 다른 사본에 맞추기(커밋·미커밋 구분 유지) / 기준 브랜치가 앞서면 rebase, 충돌이면 멈춤 / 스냅샷이 같으면 안 올림 / push 뒤 기준 브랜치 = 작업 브랜치 / 직접 고친 사본은 맞추지 않음.
 - 서버: 코드 상태 저장·교체·방송, 멤버만 묶음 받기, 방 도구 메시지 검사(요청자·이름·원격 존재), 레포 빼기·방 삭제 때 정리.
 - 맥 두 대: A 가 시킨 변경이 B 사본에 곧바로 보이고, B 가 이어서 시키면 A 의 변경 위에서 일함 / "push 해줘"로 작업 브랜치가 원격에 생기고 나눠진 커밋 / 남이 기준 브랜치에 push 한 것이 다음 실행에 반영.
 

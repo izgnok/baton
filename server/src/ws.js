@@ -67,6 +67,15 @@ export function attachWs(server, { db, files }) {
     return { requestId, roomId };
   }
 
+  // 요청자 본인이면서 아직 실행 중인 요청이어야 방 설정을 바꿀 수 있다
+  const ownRunningRequest = (userId, m) => R.ownRunningRequest(db, userId, m.requestId);
+
+  // 레포의 코드 상태(체인)가 비워졌다: 조각 파일을 지우고 방 멤버에게 알린다
+  function codeCleared(roomId, repoId, userId) {
+    files.removeParts(roomId, repoId);
+    broadcast(roomId, { type: MSG.CODE_CHANGED, roomId, repoId, userId });
+  }
+
   const handlers = {
     [MSG.ROOM_LIST]: (u) => ({ rooms: R.listRooms(db, u), publicRooms: R.listPublicRooms(db, u) }),
     [MSG.ROOM_CREATE]: (u, m) => {
@@ -90,8 +99,11 @@ export function attachWs(server, { db, files }) {
       const from = Number(m.roomId);
       const room = R.forkRoom(db, u, from, {
         name: m.name,
-        copyFiles: (id) => {
-          try { files.copyRoom(from, id); } catch (e) { files.removeRoom(id); throw e; } // 반쯤 복사된 폴더를 남기지 않는다
+        copyFiles: (id, repoMap) => {
+          try {
+            files.copyRoom(from, id);
+            for (const [oldRepo, newRepo] of repoMap) files.copyParts(from, oldRepo, id, newRepo);
+          } catch (e) { files.removeRoom(id); throw e; } // 반쯤 복사된 폴더를 남기지 않는다
         },
       });
       roomsChanged();
@@ -149,15 +161,33 @@ export function attachWs(server, { db, files }) {
       return repo;
     },
     [MSG.REPO_UPDATE]: (u, m) => {
-      const repo = R.updateRepo(db, u, Number(m.repoId), m);
-      broadcastState(db.prepare('SELECT room_id FROM room_repos WHERE id = ?').get(repo.id).room_id);
+      const repoId = Number(m.repoId);
+      const before = db.prepare('SELECT room_id, base_branch FROM room_repos WHERE id = ?').get(repoId);
+      const repo = R.updateRepo(db, u, repoId, m);
+      if (repo.baseBranch !== before.base_branch) codeCleared(before.room_id, repo.id, u);
+      broadcastState(before.room_id);
       return repo;
     },
     [MSG.REPO_REMOVE]: (u, m) => {
       const repoId = Number(m.repoId);
       const row = db.prepare('SELECT room_id FROM room_repos WHERE id = ?').get(repoId);
       R.removeRepo(db, u, repoId);
+      files.removeParts(row.room_id, repoId);
       broadcastState(row.room_id);
+    },
+    // 실행 중 Claude 의 방 도구. 멤버 누구든 그 요청의 요청자면 된다(방은 그 요청의 방)
+    [MSG.ROOM_REPO_SET]: (u, m) => {
+      const { roomId } = ownRunningRequest(u, m);
+      const { repo, codeCleared: cleared } = R.setRepo(db, roomId, m);
+      if (cleared) codeCleared(roomId, repo.id, u);
+      broadcastState(roomId);
+      return repo;
+    },
+    [MSG.ROOM_REPO_REMOVE]: (u, m) => {
+      const { roomId } = ownRunningRequest(u, m);
+      R.removeRoomRepo(db, roomId, m.repoId);
+      files.removeParts(roomId, Number(m.repoId));
+      broadcastState(roomId);
     },
     [MSG.CHAT_SEND]: (u, m) => queue.postMessage(u, Number(m.roomId), m.text),
     [MSG.REQUEST_RETRY]: (u, m) => queue.retry(u, Number(m.requestId)),
@@ -208,16 +238,22 @@ export function attachWs(server, { db, files }) {
         || !changes.every((c) => c && typeof c.path === 'string'
           && (c.contentBase64 === null || typeof c.contentBase64 === 'string'))) throw bad();
       const branches = R.checkRunBranches(db, roomId, m.branchChanges ?? []); // Claude 가 옮긴 레포 브랜치(방장이 아니어도 반영)
+      const codeStates = R.checkCodeStates(files, roomId, m.codeStates ?? []); // 파일을 옮기기 전에 검사한다
+      const promoted = R.checkPromoted(m.promotedRepoIds ?? []);
       return queue.finish(requestId, {
         transcriptVersion: m.transcriptVersion,
         sessionId: m.sessionId,
         apply: () => {
-          R.setRunBranches(db, branches);
+          // 체인을 지우는 단계는 바로 파일도 지운다(뒤의 codeStates 가 새로 올린 조각을 지우지 않도록)
+          R.setRunBranches(db, branches).forEach((repoId) => codeCleared(roomId, repoId, u));
+          R.applyPromotions(db, roomId, promoted).forEach((repoId) => codeCleared(roomId, repoId, u)); // codeStates 의 기준 브랜치 비교는 이 뒤 값으로
+          const changed = R.applyCodeStates(db, files, roomId, u, codeStates);
           files.applyShared(roomId, changes);
           files.writeTranscript(roomId, m.transcript); // 대화 원본은 마지막에 쓴다
           contexts.delete(roomId);
           broadcastState(roomId); // 바뀐 컨텍스트 크기를 모두에게
           if (changes.length) broadcast(roomId, { type: MSG.SHARED_CHANGED, roomId, userId: u });
+          for (const repoId of changed) broadcast(roomId, { type: MSG.CODE_CHANGED, roomId, repoId, userId: u });
         },
       });
     },

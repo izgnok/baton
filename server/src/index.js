@@ -19,13 +19,15 @@ function gitHead() {
 
 /**
  * 서버 시작. port 0 이면 빈 포트. commit 을 주지 않으면 소스 폴더의 git HEAD
- * @param {{port?: number, dataDir: string, commit?: string|null}} opts
+ * @param {{port?: number, dataDir: string, commit?: string|null, maxBundle?: number}} opts
  * @returns {Promise<{port: number, running: () => number, close: () => Promise<void>}>}
  */
-export async function startServer({ port = 4310, dataDir, commit }) {
+export async function startServer({ port = 4310, dataDir, commit, maxBundle }) {
   const db = openDb(path.join(dataDir, 'rooms.db'));
-  const files = createFileStore(dataDir);
+  const files = createFileStore(dataDir, { maxBundle });
+  files.purgeAllUploads(); // 끊긴 서버에 남은 임시 업로드 파일
   const server = http.createServer(createHttpHandler({ db, files, commit: commit === undefined ? gitHead() : commit }));
+  server.requestTimeout = 0; // 큰 코드 묶음 업로드가 5분 기본 제한에 끊기지 않게(헤더 제한은 그대로)
   const ws = attachWs(server, { db, files });
   ws.queue.recoverOnStart();
   const timer = setInterval(() => ws.queue.tick(), 5000);
