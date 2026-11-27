@@ -333,6 +333,8 @@ export function createService({ emit, relaunch }) {
     listRooms: () => req(MSG.ROOM_LIST),
     createRoom: (a) => req(MSG.ROOM_CREATE, a),
     joinRoom: (a) => req(MSG.ROOM_JOIN, a),
+    joinPublicRoom: (a) => req(MSG.ROOM_JOIN_PUBLIC, a),
+    forkRoom: (a) => req(MSG.ROOM_FORK, a),
     leaveRoom: async (a) => {
       const repos = (await stateOf(a.roomId).catch(() => null))?.repos ?? [];
       await req(MSG.ROOM_LEAVE, a);

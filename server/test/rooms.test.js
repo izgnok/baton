@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../src/db.js';
 import { signup } from '../src/auth.js';
 import * as R from '../src/rooms.js';
@@ -171,4 +175,100 @@ test('checkRunBranches·setRunBranches: 이 방 레포만, 이름은 문자열(�
   R.setRunBranches(db, ok);
   assert.equal(R.getRoomState(db, b, room.id).repos[0].branch, 'feature/X');
   assert.equal(R.getRoomState(db, a, other.id).repos[0].branch, 'main');
+});
+
+test('공개: 새 방은 기본 공개, 비멤버의 공개 방 목록에만 보이고 초대 코드는 없다', () => {
+  const { db, ids: [a, b] } = setup();
+  const pub = R.createRoom(db, a, { name: '공개방' });
+  const priv = R.createRoom(db, a, { name: '비공개방' });
+  assert.equal(pub.isPublic, true);
+  R.setRoomSettings(db, a, priv.id, { isPublic: false });
+  assert.equal(R.getRoomState(db, a, priv.id).room.isPublic, false);
+  assert.deepEqual(R.listPublicRooms(db, a), []); // 내 방은 안 보임
+  const list = R.listPublicRooms(db, b);
+  assert.deepEqual(list.map((r) => [r.id, r.name, r.memberCount]), [[pub.id, '공개방', 1]]);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['createdAt', 'id', 'memberCount', 'name']);
+  R.joinPublicRoom(db, b, pub.id);
+  assert.deepEqual(R.listPublicRooms(db, b), []);
+});
+
+test('공개 참가: 공개 방 가입, 이미 멤버면 그대로, 비공개는 FORBIDDEN, 없는 방은 NOT_FOUND', () => {
+  const { db, ids: [a, b] } = setup();
+  const pub = R.createRoom(db, a, { name: '공개' });
+  const priv = R.createRoom(db, a, { name: '비공개' });
+  R.setRoomSettings(db, a, priv.id, { isPublic: false });
+  assert.equal(R.joinPublicRoom(db, b, pub.id).id, pub.id);
+  R.joinPublicRoom(db, b, pub.id);
+  assert.equal(R.getRoomState(db, a, pub.id).members.length, 2);
+  assert.throws(() => R.joinPublicRoom(db, b, priv.id), forbidden);
+  assert.throws(() => R.joinPublicRoom(db, b, 999), { message: 'NOT_FOUND' });
+  // 초대 코드 참가는 공개 방에도 그대로
+  assert.equal(R.joinRoom(db, b, { inviteCode: priv.inviteCode }).id, priv.id);
+});
+
+test('isPublic 은 방장만 바꾸고 불리언만 받는다', () => {
+  const { db, ids: [a, b] } = setup();
+  const room = R.createRoom(db, a, { name: '방' });
+  R.joinRoom(db, b, { inviteCode: room.inviteCode });
+  assert.throws(() => R.setRoomSettings(db, b, room.id, { isPublic: false }), forbidden);
+  assert.throws(() => R.setRoomSettings(db, a, room.id, { isPublic: 'no' }), { message: 'INVALID_INPUT' });
+  assert.equal(R.setRoomSettings(db, a, room.id, { isPublic: false }).isPublic, false);
+  assert.equal(R.setRoomSettings(db, a, room.id, { defaultEffort: 'low' }).isPublic, false); // 주지 않으면 유지
+});
+
+test('옛 DB(is_public 칸 없음)를 열면 기존 방도 공개로 덧붙는다', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-old-'));
+  const file = path.join(dir, 'old.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, name TEXT, created_at INTEGER);
+    CREATE TABLE rooms (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, invite_code TEXT NOT NULL UNIQUE,
+      owner_id INTEGER NOT NULL, claude_session_id TEXT, transcript_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+    INSERT INTO rooms (name, invite_code, owner_id, created_at) VALUES ('옛 방', 'AAAAAA', 1, 1);`);
+  old.close();
+  const db = openDb(file);
+  assert.equal(db.prepare('SELECT is_public, fork_pending FROM rooms').get().is_public, 1);
+  assert.equal(db.prepare('SELECT fork_pending FROM rooms').get().fork_pending, 0);
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('fork: 멤버만, 레포·멤버·기본값 복사, 방장=요청자, 안내 1건, 세션 있으면 fork_pending', () => {
+  const { db, ids: [a, b, c] } = setup();
+  const room = R.createRoom(db, a, { name: '원래' });
+  R.joinRoom(db, b, { inviteCode: room.inviteCode });
+  R.setRoomSettings(db, a, room.id, { defaultModel: 'opus', defaultEffort: 'high', isPublic: false });
+  R.addRepo(db, a, room.id, { name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'dev' });
+  db.prepare("UPDATE rooms SET claude_session_id = 'S1', transcript_version = 4 WHERE id = ?").run(room.id);
+  db.prepare("INSERT INTO messages (room_id, user_id, kind, body, created_at) VALUES (?, ?, 'chat', '옛 채팅', 1)").run(room.id, a);
+
+  assert.throws(() => R.forkRoom(db, c, room.id, { name: 'x' }), forbidden);
+  assert.throws(() => R.forkRoom(db, b, 999, { name: 'x' }), { message: 'NOT_FOUND' });
+  assert.throws(() => R.forkRoom(db, b, room.id, { name: ' ' }), { message: 'INVALID_INPUT' });
+
+  const copied = [];
+  const f = R.forkRoom(db, b, room.id, { name: '갈래', copyFiles: (id) => copied.push(id) });
+  assert.deepEqual(copied, [f.id]);
+  assert.notEqual(f.inviteCode, room.inviteCode);
+  assert.deepEqual([f.ownerId, f.name, f.isPublic, f.defaultModel, f.defaultEffort], [b, '갈래', true, 'opus', 'high']);
+  assert.deepEqual([f.claudeSessionId, f.transcriptVersion], ['S1', 4]);
+  assert.equal(db.prepare('SELECT fork_pending FROM rooms WHERE id = ?').get(f.id).fork_pending, 1);
+  const st = R.getRoomState(db, a, f.id);
+  assert.deepEqual(st.members.map((m) => [m.userId, m.isOwner]).sort(), [[a, false], [b, true]]);
+  assert.deepEqual(st.repos.map((r) => [r.name, r.remoteUrl, r.branch]), [['r', 'git@h:a/r.git', 'dev']]);
+  assert.notEqual(st.repos[0].id, R.getRoomState(db, a, room.id).repos[0].id);
+  const msgs = db.prepare('SELECT user_id, kind, body FROM messages WHERE room_id = ?').all(f.id);
+  assert.deepEqual(msgs.map((m) => ({ ...m })), [{ user_id: null, kind: 'notice', body: '원래 방에서 갈라졌어요' }]);
+  // 원래 방은 그대로
+  assert.equal(R.getRoomState(db, a, room.id).room.claudeSessionId, 'S1');
+});
+
+test('fork: 세션 없는 방은 fork_pending 0, 파일 복사가 실패하면 방도 안 남는다', () => {
+  const { db, ids: [a] } = setup(1);
+  const room = R.createRoom(db, a, { name: '새 방' });
+  const f = R.forkRoom(db, a, room.id, { name: '갈래' });
+  assert.equal(f.claudeSessionId, null);
+  assert.equal(db.prepare('SELECT fork_pending FROM rooms WHERE id = ?').get(f.id).fork_pending, 0);
+  const before = count(db, 'rooms');
+  assert.throws(() => R.forkRoom(db, a, room.id, { name: 'x', copyFiles: () => { throw new Error('DISK'); } }), { message: 'DISK' });
+  assert.equal(count(db, 'rooms'), before);
 });

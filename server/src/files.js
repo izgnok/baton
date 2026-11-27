@@ -92,6 +92,12 @@ export function createFileStore(dataDir) {
       return { applied, conflicts };
     },
 
+    /** 대화 원본과 공유 파일을 다른 방 폴더로 복사한다(없으면 건너뜀) */
+    copyRoom(fromId, toId) {
+      if (!fs.existsSync(roomDir(fromId))) return;
+      fs.cpSync(roomDir(fromId), roomDir(toId), { recursive: true, force: true, errorOnExist: false });
+    },
+
     removeRoom(roomId) {
       fs.rmSync(roomDir(roomId), { recursive: true, force: true });
     },

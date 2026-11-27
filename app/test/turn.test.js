@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MSG } from '@rooms/shared/protocol.js';
 import { runTurn } from '../main/runner/turn.js';
-import { roomDirOf } from '../main/runner/sync.js';
+import { roomDirOf, transcriptPath } from '../main/runner/sync.js';
 import { buildPrompt } from '../main/runner/prompt.js';
 import { worktreePath, syncWorktree, currentBranch } from '../main/runner/worktree.js';
 
@@ -146,6 +146,27 @@ test('정상: 신호 → 이벤트(system 제외) → finish, 올리는 값과 �
 
   assert.deepEqual(a.closed, [42]);
   assert.equal(fs.existsSync(path.dirname(argAfter(rec.argv, '--mcp-config'))), false);
+});
+
+test('runStart.fork 면 원래 세션 원본을 새 방 폴더에 받고 --resume <원래 id> --fork-session 으로 실행, 끝나면 새 세션 id 를 올린다', async () => {
+  const a = setup();
+  const OLD = 'aaaaaaaa-2222-3333-4444-555555555555';
+  a.runStart = { ...a.runStart, sessionId: OLD, fork: true };
+  a.http.getTranscript = async () => '{"t":"원래 대화"}\n';
+  const { result, rec } = await runDone(a, { FAKE_TRANSCRIPT: '{"t":"갈라진 대화"}\n' });
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(rec.argv.slice(rec.argv.indexOf('--resume'), rec.argv.indexOf('--resume') + 3), ['--resume', OLD, '--fork-session']);
+  assert.equal(fs.readFileSync(transcriptPath({ cwd: roomDirOf(5), sessionId: OLD }), 'utf8'), '{"t":"원래 대화"}\n');
+  const fin = a.calls.at(-1).payload;
+  assert.deepEqual([fin.sessionId, fin.transcript], [SID, '{"t":"갈라진 대화"}\n']);
+});
+
+test('fork 가 아니면 --fork-session 이 없다', async () => {
+  const a = setup();
+  a.runStart = { ...a.runStart, sessionId: 'aaaaaaaa-2222-3333-4444-555555555555', fork: false };
+  a.http.getTranscript = async () => '{}\n';
+  const { rec } = await runDone(a, { FAKE_TRANSCRIPT: '{}\n' });
+  assert.equal(rec.argv.includes('--fork-session'), false);
 });
 
 test('목차가 없으면 "(아직 없음)"', async () => {

@@ -55,7 +55,7 @@ struct ChatView: View {
     private func gap(_ item: ChatItem) -> CGFloat {
         switch item {
         case .human(_, let c), .request(_, let c): c ? 4 : 12
-        case .claude: 12
+        case .claude, .notice: 12
         }
     }
 

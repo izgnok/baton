@@ -58,6 +58,13 @@ test('옵션은 각각 정확한 인자로 들어간다', async () => {
   ]);
 });
 
+test('fork 면 --resume 뒤에 --fork-session, 세션이 없으면 붙이지 않는다', async () => {
+  const withSession = (await run('stream-ok.jsonl', { sessionId: 'abc', fork: true })).rec.argv;
+  assert.deepEqual(withSession.slice(withSession.indexOf('--resume')), ['--resume', 'abc', '--fork-session']);
+  assert.equal((await run('stream-ok.jsonl', { sessionId: 'abc' })).rec.argv.includes('--fork-session'), false);
+  assert.equal((await run('stream-ok.jsonl', { fork: true })).rec.argv.includes('--fork-session'), false);
+});
+
 test('env 는 환경 변수에 더해지고, allowedTools 는 한 개씩 인자로 들어간다', async () => {
   const { rec } = await run('stream-ok.jsonl', {
     env: { EXTRA_FLAG: 'on' }, allowedTools: ['mcp__rooms__git_read', 'Read(//a/**)'],

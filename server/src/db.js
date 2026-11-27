@@ -66,5 +66,9 @@ export function openDb(path) {
   for (const col of ['default_model', 'default_effort']) {
     if (!have.has(col)) db.exec(`ALTER TABLE rooms ADD COLUMN ${col} TEXT`);
   }
+  // 기존 방도 공개(1)로 시작한다. fork_pending: 다음 실행이 claude_session_id 를 --fork-session 으로 이어 받아야 함
+  for (const col of ['is_public INTEGER NOT NULL DEFAULT 1', 'fork_pending INTEGER NOT NULL DEFAULT 0']) {
+    if (!have.has(col.split(' ')[0])) db.exec(`ALTER TABLE rooms ADD COLUMN ${col}`);
+  }
   return db;
 }

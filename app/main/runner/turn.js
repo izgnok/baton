@@ -96,6 +96,7 @@ export async function runTurn({
       cwd: roomDir,
       prompt,
       sessionId: runStart.sessionId ?? undefined,
+      fork: runStart.fork === true,
       addDirs: [...trees.map((t) => t.wt), ...readable],
       env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' },
       allowedTools: ['mcp__rooms__git_read', ...readRules(readPaths)],

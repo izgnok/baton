@@ -52,7 +52,7 @@ export function createQueue(db, { now = Date.now, isOnline, dispatch, dispatchCa
     ).all(req.room_id, last, req.id).map((c) => ({ ...c }));
     return {
       requestId: req.id, roomId: req.room_id, sessionId: room.claude_session_id,
-      transcriptVersion: room.transcript_version, requesterName: requester.name,
+      transcriptVersion: room.transcript_version, fork: room.fork_pending === 1, requesterName: requester.name,
       body: req.body, chatsSince,
     };
   }
@@ -160,7 +160,7 @@ export function createQueue(db, { now = Date.now, isOnline, dispatch, dispatchCa
       try {
         apply?.();
         db.prepare('UPDATE rooms SET transcript_version = ? WHERE id = ?').run(newVersion, room.id);
-        if (sessionId) db.prepare('UPDATE rooms SET claude_session_id = ? WHERE id = ?').run(sessionId, room.id);
+        if (sessionId) db.prepare('UPDATE rooms SET claude_session_id = ?, fork_pending = 0 WHERE id = ?').run(sessionId, room.id);
         db.prepare("UPDATE messages SET status = 'done', error = NULL WHERE id = ?").run(requestId);
         db.exec('COMMIT');
       } catch (e) {

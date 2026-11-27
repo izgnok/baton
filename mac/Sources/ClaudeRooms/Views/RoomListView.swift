@@ -13,9 +13,25 @@ struct RoomItem: Identifiable, Equatable {
     }
 }
 
+/// 내가 멤버가 아닌 공개 방(초대 코드 없이 참가)
+struct PublicRoomItem: Identifiable, Equatable {
+    let id: Int
+    let name: String
+    let memberCount: Int
+
+    init?(_ j: JSON) {
+        guard let id = j["id"]?.int else { return nil }
+        self.id = id
+        name = j["name"]?.string ?? ""
+        memberCount = j["memberCount"]?.int ?? 0
+    }
+}
+
 struct RoomListView: View {
     let app: AppModel
     @Local private var rooms: [RoomItem] = []
+    @Local private var publicRooms: [PublicRoomItem] = []
+    @Local private var joining: Int?
     @Local private var loaded = false
     @Local private var loginBusy = false
     @Local private var checking = false
@@ -60,6 +76,7 @@ struct RoomListView: View {
 
                     if let c = app.claude { claudeCard(c).padding(.bottom, 24) }
                     roomList
+                    if !publicRooms.isEmpty { publicList.padding(.top, 32) }
                 }
                 .frame(maxWidth: 520)
                 .padding(.horizontal, 24)
@@ -171,8 +188,49 @@ struct RoomListView: View {
         }
     }
 
+    // MARK: 참가할 수 있는 방
+
+    private var publicList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("참가할 수 있는 방").typo(.heading).foregroundStyle(Theme.text)
+            ForEach(publicRooms) { r in
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(r.name).typo(.heading).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.tail).help(r.name)
+                        Text(PanelText.memberCountText(r.memberCount)).typo(.caption).foregroundStyle(Theme.sub)
+                    }
+                    Spacer(minLength: 8)
+                    Button("참가") { Task { await join(r) } }
+                        .buttonStyle(.rooms(.onCard, .small))
+                        .disabled(joining != nil)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+            }
+        }
+    }
+
+    private func join(_ r: PublicRoomItem) async {
+        joining = r.id
+        defer { joining = nil }
+        do {
+            let room = try await app.call("joinPublicRoom", .object(["roomId": .number(Double(r.id))]), toast: false)
+            app.toast("방에 참가했어요")
+            if let id = room["id"]?.int { app.openRoom(id) }
+        } catch {
+            // 그 사이 비공개로 바뀌었거나 사라진 방이면 목록을 다시 읽는다
+            if case .remote(let code)? = error as? CoreError, code == "FORBIDDEN" || code == "NOT_FOUND" {
+                app.toast("이 방은 이제 참가할 수 없어요")
+            } else {
+                app.toast(AppModel.message(error))
+            }
+            await load()
+        }
+    }
+
     private func load() async {
         if let j = try? await app.call("listRooms") {
+            publicRooms = (j["publicRooms"]?.array ?? []).compactMap(PublicRoomItem.init)
             rooms = (j["rooms"]?.array ?? []).compactMap(RoomItem.init)
             for r in rooms { app.roomNames[r.id] = r.name }
         }

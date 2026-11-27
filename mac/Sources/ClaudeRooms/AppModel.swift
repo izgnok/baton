@@ -320,7 +320,7 @@ final class AppModel {
             if type == "room.state" {
                 if let id = p["state"]?["room"]?["id"]?.int, let name = p["state"]?["room"]?["name"]?.string { roomNames[id] = name }
                 roomsVersion += 1
-            } else if type == "room.delete" {
+            } else if type == "room.delete" || type == "rooms.changed" {
                 roomsVersion += 1
             }
         case "approval:ask":

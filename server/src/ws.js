@@ -32,6 +32,9 @@ export function attachWs(server, { db, files }) {
   const memberIds = (roomId) => db.prepare('SELECT user_id FROM room_members WHERE room_id = ?')
     .all(roomId).map((r) => r.user_id);
   const broadcast = (roomId, payload) => memberIds(roomId).forEach((u) => sendUser(u, payload));
+  // 공개 방 목록이 바뀐 순간: 연결된 모두가 목록을 다시 불러온다
+  const roomsChanged = () => conns.forEach((list) => list.forEach((ws) => sendWs(ws, { type: MSG.ROOMS_CHANGED })));
+  const isPublic = (roomId) => db.prepare('SELECT is_public FROM rooms WHERE id = ?').get(roomId)?.is_public !== 0;
 
   const queue = createQueue(db, {
     isOnline: (u) => (conns.get(u)?.length ?? 0) > 0,
@@ -65,11 +68,33 @@ export function attachWs(server, { db, files }) {
   }
 
   const handlers = {
-    [MSG.ROOM_LIST]: (u) => ({ rooms: R.listRooms(db, u) }),
-    [MSG.ROOM_CREATE]: (u, m) => R.createRoom(db, u, { name: m.name }),
+    [MSG.ROOM_LIST]: (u) => ({ rooms: R.listRooms(db, u), publicRooms: R.listPublicRooms(db, u) }),
+    [MSG.ROOM_CREATE]: (u, m) => {
+      const room = R.createRoom(db, u, { name: m.name });
+      roomsChanged();
+      return room;
+    },
     [MSG.ROOM_JOIN]: (u, m) => {
       const room = R.joinRoom(db, u, { inviteCode: m.inviteCode });
       broadcastState(room.id);
+      if (room.isPublic) roomsChanged(); // 멤버 수가 바뀐다
+      return room;
+    },
+    [MSG.ROOM_JOIN_PUBLIC]: (u, m) => {
+      const room = R.joinPublicRoom(db, u, Number(m.roomId));
+      broadcastState(room.id);
+      roomsChanged();
+      return room;
+    },
+    [MSG.ROOM_FORK]: (u, m) => {
+      const from = Number(m.roomId);
+      const room = R.forkRoom(db, u, from, {
+        name: m.name,
+        copyFiles: (id) => {
+          try { files.copyRoom(from, id); } catch (e) { files.removeRoom(id); throw e; } // 반쯤 복사된 폴더를 남기지 않는다
+        },
+      });
+      roomsChanged();
       return room;
     },
     [MSG.ROOM_OPEN]: (u, m) => {
@@ -86,15 +111,19 @@ export function attachWs(server, { db, files }) {
       memberStatus.get(roomId)?.delete(u);
       queue.onLeave(u, roomId);
       broadcastState(roomId);
+      if (isPublic(roomId)) roomsChanged();
     },
     [MSG.ROOM_RENAME]: (u, m) => {
       const room = R.renameRoom(db, u, Number(m.roomId), { name: m.name });
       broadcastState(room.id);
+      if (room.isPublic) roomsChanged();
       return room;
     },
     [MSG.ROOM_SETTINGS]: (u, m) => {
+      const before = isPublic(Number(m.roomId));
       const room = R.setRoomSettings(db, u, Number(m.roomId), m);
       broadcastState(room.id);
+      if (room.isPublic !== before) roomsChanged();
       return room;
     },
     [MSG.INVITE_REGENERATE]: (u, m) => {
@@ -105,11 +134,13 @@ export function attachWs(server, { db, files }) {
     [MSG.ROOM_DELETE]: (u, m) => {
       const roomId = Number(m.roomId);
       const members = memberIds(roomId);
+      const wasPublic = isPublic(roomId);
       R.deleteRoom(db, u, roomId);
       memberStatus.delete(roomId);
       contexts.delete(roomId);
       files.removeRoom(roomId);
       members.forEach((id) => sendUser(id, { type: MSG.ROOM_DELETE, roomId }));
+      if (wasPublic) roomsChanged();
     },
     [MSG.REPO_ADD]: (u, m) => {
       const roomId = Number(m.roomId);

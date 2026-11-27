@@ -54,6 +54,10 @@ struct ChatItemView: View {
             HumanMessageView(model: model, m: m, continuing: continuing, isRequest: true)
         case .claude(_, let modelName, let parts, let cards, let progress):
             ClaudeGroupView(model: model, modelName: modelName, parts: parts, cards: cards, progress: progress)
+        case .notice(let m):
+            Text(m.body).typo(.caption).foregroundStyle(Theme.sub)
+                .lineLimit(1).truncationMode(.tail).help(m.body)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }

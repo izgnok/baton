@@ -71,6 +71,8 @@ struct SharedPanel: View {
         switch PanelText.fileKind(path) {
         case .markdown: "doc.text"
         case .html: "globe"
+        case .image: "photo"
+        case .pdf: "doc.richtext"
         case .other: "doc"
         }
     }

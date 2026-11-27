@@ -131,9 +131,12 @@ enum ChatItem: Identifiable, Equatable {
     case human(ChatMessage, continuing: Bool)
     case request(ChatMessage, continuing: Bool)
     case claude(requestId: Int, model: String?, parts: [ClaudePart], cards: [CodeResult], progress: ProgressLine?)
+    /// 시스템 안내 한 줄(예: 다른 방에서 갈라졌어요)
+    case notice(ChatMessage)
 
     var id: String {
         switch self {
+        case .notice(let m): "n\(m.id)"
         case .human(let m, _): "m\(m.id)"
         case .request(let m, _): "r\(m.id)"
         case .claude(let rid, _, _, _, _): "c\(rid)"
@@ -198,6 +201,7 @@ final class RoomModel {
     var me: Int? { app.user?["id"]?.int }
     var roomName: String { state?["room"]?["name"]?.string ?? app.roomNames[roomId] ?? "" }
     var memberCount: Int { state?["members"]?.array?.count ?? 0 }
+    var isPublic: Bool { state?["room"]?["isPublic"]?.bool ?? true }
     /// 방 컨텍스트 크기(서버가 대화 원본 마지막 답으로 계산 — 방 멤버 모두 같은 값). 아직 답이 없으면 nil
     var context: (tokens: Int, model: String?)? {
         guard let c = state?["context"], c["compacted"]?.bool != true, let t = c["tokens"]?.int else { return nil }
@@ -406,6 +410,9 @@ final class RoomModel {
                 out.append(.request(m, continuing: m.userId != nil && m.userId == lastHuman))
                 lastHuman = m.userId
                 if let block = claudeItem(m, events[m.id] ?? []) { out.append(block); lastHuman = nil }
+            case "notice":
+                out.append(.notice(m))
+                lastHuman = nil
             default:
                 break
             }

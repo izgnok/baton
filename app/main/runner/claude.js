@@ -6,19 +6,20 @@ const LIMIT = /usage limit|hit your limit|limit reached/i;
 
 /**
  * claude -p 를 실행하고 stream-json 이벤트를 onEvent 로 넘긴다
- * @param {{cwd: string, prompt: string, sessionId?: string, addDirs?: string[], systemPrompt?: string,
+ * @param {{cwd: string, prompt: string, sessionId?: string, fork?: boolean, addDirs?: string[], systemPrompt?: string,
  *   mcpConfigPath?: string, permissionMode?: string, model?: string, effort?: string, env?: Record<string, string>, allowedTools?: string[],
  *   onEvent?: (e: object) => void,
  *   claudeBin?: string, signal?: AbortSignal}} opts
  * @returns {Promise<{sessionId: string|null, result: string, permissionDenials: unknown[]}>}
  */
 export function runClaude({
-  cwd, prompt, sessionId, addDirs = [], systemPrompt, mcpConfigPath, permissionMode, model, effort, env = {}, allowedTools = [],
+  cwd, prompt, sessionId, fork = false, addDirs = [], systemPrompt, mcpConfigPath, permissionMode, model, effort, env = {}, allowedTools = [],
   onEvent = () => {}, claudeBin = process.env.CLAUDE_BIN || 'claude', signal,
 }) {
   // --forward-subagent-text: 서브에이전트의 글·도구 사용을 parent_tool_use_id 와 함께 받는다
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--forward-subagent-text'];
   if (sessionId) args.push('--resume', sessionId);
+  if (sessionId && fork) args.push('--fork-session'); // 이어 받되 새 세션으로 갈라진다
   for (const d of addDirs) args.push('--add-dir', d);
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath, '--permission-prompt-tool', 'mcp__rooms__approve');

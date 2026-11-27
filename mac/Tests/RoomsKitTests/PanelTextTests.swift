@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RoomsKit
 
@@ -8,6 +9,14 @@ import Testing
         #expect(note == "방에서 나왔어요. 방 작업 폴더 api(커밋 안 한 변경), web(X)는 남겨 뒀어요")
         #expect(PanelText.repoRemovedText(keptReason: nil) == "레포를 삭제했어요")
         #expect(PanelText.repoRemovedText(keptReason: "UNPUSHED") == "레포를 삭제했어요. 방 작업 폴더는 남겨 뒀어요 (push 안 한 커밋)")
+    }
+
+    @Test func publicRoomAndForkTexts() {
+        #expect(PanelText.memberCountText(1) == "멤버 1명")
+        #expect(PanelText.memberCountText(12) == "멤버 12명")
+        #expect(PanelText.forkDefaultName("결제 개선") == "결제 개선 (갈래)")
+        #expect(PanelText.publicToast(true) == "공개 방으로 바꿨어요")
+        #expect(PanelText.publicToast(false) == "비공개 방으로 바꿨어요")
     }
 
     @Test func repoStatus() {
@@ -26,6 +35,11 @@ import Testing
         #expect(PanelText.fileKind("x/A.MD") == .markdown)
         #expect(PanelText.fileKind("r.htm") == .html)
         #expect(PanelText.fileKind("a.txt") == .other)
+        #expect(PanelText.fileKind("outputs/그림.PNG") == .image)
+        #expect(PanelText.fileKind("a.svg") == .image)
+        #expect(PanelText.fileKind("r.pdf") == .pdf)
+        #expect(PanelText.isBinary(Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x1A])))
+        #expect(!PanelText.isBinary(Data("한글 글".utf8)))
     }
 
     @Test func conflictAndModelSummary() {

@@ -29,6 +29,15 @@ public enum PanelText {
         return "레포를 삭제했어요. 방 작업 폴더는 남겨 뒀어요 (\(keptText(keptReason)))"
     }
 
+    /// "멤버 n명" (방 머리줄·공개 방 카드)
+    public static func memberCountText(_ n: Int) -> String { "멤버 \(n)명" }
+
+    /// 이 대화로 새 방 만들기 시트의 기본 이름
+    public static func forkDefaultName(_ name: String) -> String { "\(name) (갈래)" }
+
+    /// 공개 여부를 바꾼 뒤 토스트
+    public static func publicToast(_ isPublic: Bool) -> String { isPublic ? "공개 방으로 바꿨어요" : "비공개 방으로 바꿨어요" }
+
     /// 레포 카드 상태 한 줄 (RP4). ok 면 정상, 아니면 위험 글자
     public static func repoStatus(block: String?, indexed: Bool) -> (text: String, ok: Bool) {
         switch block {
@@ -67,14 +76,22 @@ public enum PanelText {
         return out
     }
 
-    public enum FileKind: Sendable { case markdown, html, other }
+    public enum FileKind: Sendable { case markdown, html, image, pdf, other }
+
+    private static let imageExts = ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tif", "tiff", "svg"]
 
     public static func fileKind(_ path: String) -> FileKind {
         let l = path.lowercased()
-        if l.hasSuffix(".md") { return .markdown }
-        if l.hasSuffix(".html") || l.hasSuffix(".htm") { return .html }
+        let ext = l.split(separator: ".").last.map(String.init) ?? ""
+        if ext == "md" { return .markdown }
+        if ext == "html" || ext == "htm" { return .html }
+        if imageExts.contains(ext) { return .image }
+        if ext == "pdf" { return .pdf }
         return .other
     }
+
+    /// 글로 보여 줄 수 없는 파일인지(앞 8KB 에 NUL 바이트가 있으면 바이너리로 본다)
+    public static func isBinary(_ data: Data) -> Bool { data.prefix(8192).contains(0) }
 
     /// 방 기본 모델·노력 요약(비어 있으면 "내 Claude 설정")
     public static func modelSummary(model: String, effort: String) -> String {

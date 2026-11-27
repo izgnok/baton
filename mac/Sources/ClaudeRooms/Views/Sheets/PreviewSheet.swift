@@ -1,7 +1,8 @@
 import SwiftUI
 import WebKit
+import PDFKit
 
-/// 공유 파일 미리보기(맥 기본 시트). md 는 마크다운, html 은 스크립트·외부 리소스 없이, 그 밖은 고정폭 글
+/// 공유 파일 미리보기(맥 기본 시트). md 는 마크다운, html 은 스크립트·외부 리소스 없이, 이미지·PDF 는 그대로, 그 밖은 고정폭 글(바이너리는 안내만)
 struct PreviewSheet: View {
     let model: RoomModel
     let path: String
@@ -10,6 +11,9 @@ struct PreviewSheet: View {
         case markdown([MarkdownBlock], cut: Bool)
         case html(String)
         case plain(String, cut: Bool)
+        case image(NSImage)
+        case pdf(PDFDocument)
+        case unsupported
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -70,6 +74,20 @@ struct PreviewSheet: View {
                 MonoTextView(text: text)
                 if cut { Text(PreviewText.cutNote).typo(.caption).foregroundStyle(Theme.sub).padding(.horizontal, 16).padding(.bottom, 8) }
             }
+        case .image(let img)?:
+            // 칸에 맞춰 줄이고 원래 크기보다 키우지 않는다
+            Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+                .frame(maxWidth: img.size.width, maxHeight: img.size.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
+        case .pdf(let doc)?:
+            PDFPreview(document: doc)
+        case .unsupported?:
+            VStack(spacing: 8) {
+                Image(systemName: "doc").font(.system(size: 28)).foregroundStyle(Theme.sub)
+                Text("미리보기를 지원하지 않는 파일이에요. 기본 앱으로 열어 주세요").typo(.ui).foregroundStyle(Theme.sub)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -86,7 +104,12 @@ struct PreviewSheet: View {
         case .markdown:
             let r = PreviewText.decode(data)
             content = .markdown(markdownBlocks(r.text), cut: r.cut)
+        case .image:
+            content = NSImage(data: data).map(Content.image) ?? .unsupported
+        case .pdf:
+            content = PDFDocument(data: data).map(Content.pdf) ?? .unsupported
         case .other:
+            if PanelText.isBinary(data) { content = .unsupported; return }
             let r = PreviewText.decode(data)
             content = .plain(r.text, cut: r.cut)
         }
@@ -151,4 +174,17 @@ struct SafeHTMLView: NSViewRepresentable {
             action.navigationType == .other ? .allow : .cancel
         }
     }
+}
+
+/// PDF 미리보기(PDFKit, 읽기 전용)
+private struct PDFPreview: NSViewRepresentable {
+    let document: PDFDocument
+    func makeNSView(context: Context) -> PDFView {
+        let v = PDFView()
+        v.autoScales = true
+        v.displayMode = .singlePageContinuous
+        v.document = document
+        return v
+    }
+    func updateNSView(_ v: PDFView, context: Context) { if v.document !== document { v.document = document } }
 }

@@ -126,6 +126,11 @@ export async function startCapture(outDir) {
     clients.push(c);
     await waitFor(() => c.connected, 'C 연결');
 
+    // 다른 사람이 만든 방: 공개 방은 내 방 목록 아래 "참가할 수 있는 방"에 보이고, 비공개 방은 보이지 않는다
+    await c.request(MSG.ROOM_CREATE, { name: '디자인 시스템 모임' });
+    const hidden = await c.request(MSG.ROOM_CREATE, { name: '비공개 기획 방' });
+    await c.request(MSG.ROOM_SETTINGS, { roomId: hidden.id, isPublic: false });
+
     const room = await handlers.createRoom({ name: '결제 개선' });
     await b.request(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
     await c.request(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });

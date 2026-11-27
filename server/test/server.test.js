@@ -375,3 +375,132 @@ test('실행이 끝날 때 branchChanges: 요청자만, 이 방 레포·올바�
   assert.equal((await B.req(MSG.REPO_UPDATE, { repoId: repo.id, branch: 'y' })).error, 'FORBIDDEN');
   await Promise.all([A.close(), B.close()]);
 });
+
+const SID1 = '11111111-2222-4333-8444-555555555555';
+const SID2 = '99999999-2222-4333-8444-555555555555';
+
+test('공개 방: 목록에 보이고 바로 참가, 비공개는 거부, 목록이 바뀌면 모두에게 rooms.changed', async () => {
+  const a = await signup('pub-a');
+  const b = await signup('pub-b');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const isChanged = (m) => m.type === MSG.ROOMS_CHANGED;
+
+  const created = B.next(isChanged);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '열린 방' });
+  await timeout(created);
+  assert.equal(room.isPublic, true);
+  let pub = (await B.ok(MSG.ROOM_LIST)).publicRooms.filter((r) => r.id === room.id);
+  assert.deepEqual(pub, [{ id: room.id, name: '열린 방', memberCount: 1, createdAt: room.createdAt }]);
+  assert.equal((await A.ok(MSG.ROOM_LIST)).publicRooms.some((r) => r.id === room.id), false);
+
+  // 비공개로 바꾸면 목록에서 사라지고 공개 참가는 FORBIDDEN, 방장 아니면 못 바꿈
+  assert.equal((await B.req(MSG.ROOM_SETTINGS, { roomId: room.id, isPublic: false })).error, 'FORBIDDEN');
+  const toggled = B.next(isChanged);
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, isPublic: false });
+  await timeout(toggled);
+  assert.equal((await B.ok(MSG.ROOM_LIST)).publicRooms.some((r) => r.id === room.id), false);
+  assert.equal((await B.req(MSG.ROOM_JOIN_PUBLIC, { roomId: room.id })).error, 'FORBIDDEN');
+
+  // 다시 공개 → 참가 → 방장에게 상태 방송, 이미 멤버여도 성공
+  const back = B.next(isChanged);
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, isPublic: true });
+  await timeout(back);
+  const stateP = A.next((m) => m.type === MSG.ROOM_STATE && m.state.members.length === 2);
+  assert.equal((await B.ok(MSG.ROOM_JOIN_PUBLIC, { roomId: room.id })).id, room.id);
+  await timeout(stateP);
+  await B.ok(MSG.ROOM_JOIN_PUBLIC, { roomId: room.id });
+  assert.equal((await B.ok(MSG.ROOM_LIST)).rooms.some((r) => r.id === room.id), true);
+  assert.equal((await B.ok(MSG.ROOM_LIST)).publicRooms.some((r) => r.id === room.id), false);
+
+  // 방 삭제도 알린다
+  const c = await signup('pub-c');
+  const C = await login(c.token);
+  const deleted = C.next(isChanged);
+  await A.ok(MSG.ROOM_DELETE, { roomId: room.id });
+  await timeout(deleted);
+  await Promise.all([A.close(), B.close(), C.close()]);
+});
+
+test('room.fork: 멤버만, 복사·방장·안내, 첫 실행은 fork 로 이어 받고 끝나면 새 세션', async () => {
+  const a = await signup('fork-a');
+  const b = await signup('fork-b');
+  const c = await signup('fork-c');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const C = await login(c.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '원래 방' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+  await A.ok(MSG.REPO_ADD, { roomId: room.id, name: 'r', remoteUrl: 'git@h:a/r.git', branch: 'dev' });
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, defaultModel: 'sonnet', defaultEffort: 'low' });
+
+  // 원래 방에서 한 번 실행해 세션·대화 원본·공유 파일을 만든다
+  const startP = A.next((m) => m.type === MSG.RUN_START);
+  const msg = await A.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 기억해' });
+  assert.equal((await timeout(startP)).runStart.fork, false);
+  await A.ok(MSG.RUN_FINISH, {
+    requestId: msg.id, transcriptVersion: 0, sessionId: SID1, transcript: '{"t":"원본"}\n',
+    sharedChanges: [{ path: 'memory/INDEX.md', contentBase64: Buffer.from('# 목차').toString('base64') }],
+  });
+
+  assert.equal((await C.req(MSG.ROOM_FORK, { roomId: room.id, name: '갈래' })).error, 'FORBIDDEN');
+  assert.equal((await B.req(MSG.ROOM_FORK, { roomId: room.id, name: ' ' })).error, 'INVALID_INPUT');
+  const changed = C.next((m) => m.type === MSG.ROOMS_CHANGED);
+  const f = await B.ok(MSG.ROOM_FORK, { roomId: room.id, name: '갈래' });
+  await timeout(changed);
+  assert.deepEqual([f.name, f.ownerId, f.isPublic, f.defaultModel, f.defaultEffort, f.claudeSessionId, f.transcriptVersion],
+    ['갈래', b.user.id, true, 'sonnet', 'low', SID1, 1]);
+
+  // 새 방 멤버 둘 모두 목록에 있고, 대화 원본·공유 파일이 복사됨, 안내 한 줄뿐
+  assert.equal((await A.ok(MSG.ROOM_LIST)).rooms.some((r) => r.id === f.id), true);
+  const opened = await A.ok(MSG.ROOM_OPEN, { roomId: f.id });
+  assert.deepEqual(opened.state.repos.map((r) => [r.name, r.branch]), [['r', 'dev']]);
+  assert.deepEqual(opened.state.members.map((m) => [m.name, m.isOwner]), [['fork-a', false], ['fork-b', true]]);
+  assert.deepEqual(opened.messages.map((m) => [m.kind, m.body]), [['notice', '원래 방 방에서 갈라졌어요']]);
+  assert.equal(await (await get(`/rooms/${f.id}/transcript`, a.token)).text(), '{"t":"원본"}\n');
+  assert.equal(await (await get(`/rooms/${f.id}/shared?path=memory%2FINDEX.md`, a.token)).text(), '# 목차');
+
+  // 첫 실행은 fork: true + 원래 세션, 끝나면 새 세션으로 바뀌고 다음 실행은 fork 아님
+  const s2 = B.next((m) => m.type === MSG.RUN_START);
+  const r1 = await B.ok(MSG.CHAT_SEND, { roomId: f.id, text: '@claude 이어서' });
+  const rs1 = (await timeout(s2)).runStart;
+  assert.deepEqual([rs1.fork, rs1.sessionId], [true, SID1]);
+  await B.ok(MSG.RUN_FINISH, { requestId: r1.id, transcriptVersion: 1, sessionId: SID2, transcript: '{"t":"갈래"}\n', sharedChanges: [] });
+  const s3 = B.next((m) => m.type === MSG.RUN_START);
+  const r2 = await B.ok(MSG.CHAT_SEND, { roomId: f.id, text: '@claude 또' });
+  const rs2 = (await timeout(s3)).runStart;
+  assert.deepEqual([rs2.fork, rs2.sessionId], [false, SID2]);
+  await B.ok(MSG.RUN_FAIL, { requestId: r2.id, reason: 'X' });
+
+  // 두 방은 서로 영향 없음: 원래 방 대화 원본·세션 그대로
+  assert.equal(await (await get(`/rooms/${room.id}/transcript`, a.token)).text(), '{"t":"원본"}\n');
+  assert.equal((await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.room.claudeSessionId, SID1);
+  await Promise.all([A.close(), B.close(), C.close()]);
+});
+
+test('room.fork: 실행이 실패하면 fork 가 유지되고, 세션 없는 방은 fork 아님', async () => {
+  const a = await signup('fork2-a');
+  const A = await login(a.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '빈 방' });
+  const empty = await A.ok(MSG.ROOM_FORK, { roomId: room.id, name: '빈 갈래' });
+  const s0 = A.next((m) => m.type === MSG.RUN_START);
+  const q0 = await A.ok(MSG.CHAT_SEND, { roomId: empty.id, text: '@claude 해' });
+  const rs0 = (await timeout(s0)).runStart;
+  assert.deepEqual([rs0.fork, rs0.sessionId], [false, null]);
+  await A.ok(MSG.RUN_FAIL, { requestId: q0.id, reason: 'X' });
+
+  const startP = A.next((m) => m.type === MSG.RUN_START);
+  const msg = await A.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 하나' });
+  await timeout(startP);
+  await A.ok(MSG.RUN_FINISH, { requestId: msg.id, transcriptVersion: 0, sessionId: SID1, transcript: 'T\n', sharedChanges: [] });
+  const f = await A.ok(MSG.ROOM_FORK, { roomId: room.id, name: '갈래' });
+  const s1 = A.next((m) => m.type === MSG.RUN_START);
+  const r1 = await A.ok(MSG.CHAT_SEND, { roomId: f.id, text: '@claude 실패할 것' });
+  assert.equal((await timeout(s1)).runStart.fork, true);
+  const s2 = A.next((m) => m.type === MSG.RUN_START);
+  await A.ok(MSG.RUN_FAIL, { requestId: r1.id, reason: 'CLAUDE_EXIT_1' });
+  await A.ok(MSG.REQUEST_RETRY, { requestId: r1.id });
+  const rs = (await timeout(s2)).runStart;
+  assert.deepEqual([rs.fork, rs.sessionId], [true, SID1]);
+  await A.close();
+});

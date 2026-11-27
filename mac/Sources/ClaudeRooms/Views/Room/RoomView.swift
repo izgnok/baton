@@ -4,6 +4,7 @@ import SwiftUI
 struct RoomView: View {
     let app: AppModel
     @Local private var model: RoomModel
+    @Local private var forkOpen = false
 
     static let tabs = [("repos", "레포"), ("shared", "공유 파일"), ("members", "멤버")]
 
@@ -37,6 +38,16 @@ struct RoomView: View {
         })
         .tint(Theme.accentText)
         .sheet(item: previewItem) { PreviewSheet(model: model, path: $0.id) }
+        .sheet(isPresented: $forkOpen) {
+            FormSheet(
+                title: "이 대화로 새 방 만들기", submitLabel: "새 방 만들기",
+                fields: [.init(id: "name", label: "새 방 이름", value: PanelText.forkDefaultName(model.roomName))],
+                onSubmit: { v in
+                    let room = try await model.req("forkRoom", ["name": .string(v["name"] ?? "")], toast: false)
+                    app.toast("새 방을 만들었어요")
+                    if let id = room["id"]?.int { app.openRoom(id) }
+                })
+        }
         .task {
             app.currentRoom = model
             await model.start()
@@ -76,11 +87,25 @@ struct RoomView: View {
                 .help("Claude가 이 방에서 답하면 그때부터 컨텍스트 크기가 보여요")
             }
             UsageBars(usage: app.usage, compact: true)
-            Text("멤버 \(model.memberCount)명").typo(.ui).foregroundStyle(Theme.sub).fixedSize()
+            Text(PanelText.memberCountText(model.memberCount)).typo(.ui).foregroundStyle(Theme.sub).fixedSize()
+            moreMenu
         }
         .padding(.leading, 76) // 왼쪽 위 신호등 버튼 자리
         .padding(.trailing, 16)
         .frame(height: 52)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("이 대화로 새 방 만들기") { forkOpen = true }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.sub)
+                .frame(width: 24, height: 24).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("더 보기")
     }
 
     // MARK: 오른쪽 패널

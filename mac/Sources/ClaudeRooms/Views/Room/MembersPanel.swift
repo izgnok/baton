@@ -161,11 +161,23 @@ struct MembersPanel: View {
         }
     }
 
+    private func setPublic(_ on: Bool) {
+        Task {
+            if (try? await model.req("setRoomSettings", ["isPublic": .bool(on)])) != nil { model.app.toast(PanelText.publicToast(on)) }
+        }
+    }
+
     // MARK: 방 설정(방장만)
 
     private var settingsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("방 설정").typo(.uiStrong).foregroundStyle(Theme.text)
+            Toggle(isOn: Binding(get: { model.isPublic }, set: { setPublic($0) })) {
+                Text("공개 방").typo(.ui).foregroundStyle(Theme.text)
+            }
+            .toggleStyle(.switch)
+            Text("켜 두면 초대 코드 없이 목록에서 참가할 수 있어요").typo(.caption).foregroundStyle(Theme.sub)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button("초대 코드 바꾸기") {
                     Task { if (try? await model.req("regenerateInvite")) != nil { model.app.toast("초대 코드를 새로 만들었어요") } }

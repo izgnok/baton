@@ -28,6 +28,9 @@ export const MSG = Object.freeze({
   RUN_CANCEL: 'run.cancel',
   MEMBER_STATUS: 'member.status',
   ROOM_SETTINGS: 'room.settings',
+  ROOM_JOIN_PUBLIC: 'room.join_public', // 공개 방에 초대 코드 없이 참가
+  ROOM_FORK: 'room.fork', // 이 방의 Claude 대화를 이어 받은 새 방 만들기
+  ROOMS_CHANGED: 'rooms.changed', // 공개 방 목록이 바뀌었으니 다시 불러오라는 알림
   SHARED_PUT: 'shared.put', // 사람이 직접 고친 공유 파일 올리기
   SHARED_CHANGED: 'shared.changed', // 공유 파일이 바뀌었다는 알림
 });
