@@ -7,9 +7,15 @@ struct RoomView: View {
 
     static let tabs = [("repos", "레포"), ("shared", "공유 파일"), ("members", "멤버")]
 
-    init(app: AppModel, id: Int, tab: String) {
+    init(app: AppModel, id: Int, tab: String, preview: String? = nil) {
         self.app = app
-        _model = State(initialValue: RoomModel(roomId: id, app: app, tab: tab))
+        _model = State(initialValue: RoomModel(roomId: id, app: app, tab: tab, preview: preview))
+    }
+
+    private struct PreviewItem: Identifiable { let id: String }
+
+    private var previewItem: Binding<PreviewItem?> {
+        Binding(get: { model.preview.map(PreviewItem.init) }, set: { if $0 == nil { model.preview = nil } })
     }
 
     var body: some View {
@@ -30,6 +36,7 @@ struct RoomView: View {
             return .handled
         })
         .tint(Theme.accentText)
+        .sheet(item: previewItem) { PreviewSheet(model: model, path: $0.id) }
         .task {
             app.currentRoom = model
             await model.start()

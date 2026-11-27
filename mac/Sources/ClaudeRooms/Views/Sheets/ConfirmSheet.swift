@@ -29,5 +29,6 @@ struct ConfirmSheet: View {
         .padding(24)
         .frame(width: 400)
         .background(Theme.bg)
+        .trackSheet(.confirm)
     }
 }

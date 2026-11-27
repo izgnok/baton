@@ -28,7 +28,7 @@ struct ContentView: View {
             case .needNode: NeedNodeView(app: app)
             case .login(let url): LoginView(app: app, serverUrl: url).id(url)
             case .rooms: RoomListView(app: app)
-            case .room(let id, let tab, let preview): RoomView(app: app, id: id, tab: tab).id("\(id)/\(tab)/\(preview ?? "")")
+            case .room(let id, let tab, let preview): RoomView(app: app, id: id, tab: tab, preview: preview).id("\(id)/\(tab)/\(preview ?? "")")
             }
         }
         .frame(minWidth: 960, minHeight: 640)
@@ -37,6 +37,7 @@ struct ContentView: View {
         .background(alignment: .top) { WindowDragArea().frame(height: 52) } // 신호등 줄·머리줄의 빈 곳을 잡고 창을 옮긴다
         .overlay(alignment: .bottom) { ToastView(text: app.toastText) }
         .animation(.easeOut(duration: 0.2), value: app.toastText)
+        .environment(app)
         .onAppear { app.windowReady() }
         .task { await app.start() }
     }

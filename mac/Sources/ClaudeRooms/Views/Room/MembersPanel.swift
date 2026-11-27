@@ -37,7 +37,7 @@ struct MembersPanel: View {
         .sheet(item: $sheet) { which in
             switch which {
             case .rename:
-                FieldsSheet(title: "방 이름 바꾸기", submitLabel: "저장", fields: [.init(id: "name", label: "방 이름", value: model.roomName)]) { v in
+                FormSheet(title: "방 이름 바꾸기", submitLabel: "저장", fields: [.init(id: "name", label: "방 이름", value: model.roomName)]) { v in
                     try await model.req("renameRoom", ["name": .string(v["name"] ?? "")], toast: false)
                     model.app.toast("방 이름을 바꿨어요")
                 }

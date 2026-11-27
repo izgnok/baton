@@ -178,11 +178,11 @@ struct ReposPanel: View {
         .sheet(item: $sheet) { which in
             switch which {
             case .add(let d):
-                FieldsSheet(title: "레포 추가", submitLabel: "추가", fields: fields(name: d.name, url: d.remoteUrl, branch: d.branch)) { v in
+                FormSheet(title: "레포 추가", submitLabel: "추가", fields: fields(name: d.name, url: d.remoteUrl, branch: d.branch)) { v in
                     try await rm.add(d, name: v["name"] ?? "", remoteUrl: v["remoteUrl"] ?? "", branch: v["branch"] ?? "")
                 }
             case .edit(let r):
-                FieldsSheet(title: "레포 수정", submitLabel: "저장", fields: fields(name: r.name, url: r.remoteUrl, branch: r.branch)) { v in
+                FormSheet(title: "레포 수정", submitLabel: "저장", fields: fields(name: r.name, url: r.remoteUrl, branch: r.branch)) { v in
                     try await rm.update(r, name: v["name"] ?? "", remoteUrl: v["remoteUrl"] ?? "", branch: v["branch"] ?? "")
                 }
             case .remove(let r):
@@ -192,7 +192,7 @@ struct ReposPanel: View {
         }
     }
 
-    private func fields(name: String, url: String, branch: String) -> [FieldsSheet.Field] {
+    private func fields(name: String, url: String, branch: String) -> [FormSheet.Field] {
         [.init(id: "name", label: "레포 이름", value: name, placeholder: "payment-api"),
          .init(id: "remoteUrl", label: "레포 주소", value: url, placeholder: "git@github.com:team/payment-api.git"),
          .init(id: "branch", label: "브랜치", value: branch)]

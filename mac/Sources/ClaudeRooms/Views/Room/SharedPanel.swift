@@ -10,7 +10,7 @@ struct SharedPanel: View {
                 // 안내와 버튼은 다른 줄(SH1)
                 Text("고쳐서 저장하면 모두에게 반영돼요").typo(.caption).foregroundStyle(Theme.sub)
                     .lineLimit(1).truncationMode(.tail)
-                Button("Finder에서 열기") { Task { await open(nil, reveal: false) } }
+                Button("Finder에서 열기") { Task { await model.openShared(nil, reveal: false) } }
                     .buttonStyle(.rooms(.secondary, .small))
                     .help("이 방의 공유 폴더를 Finder에서 열어요")
                 list
@@ -60,10 +60,10 @@ struct SharedPanel: View {
         }
         .buttonStyle(.plain)
         .help(f.path)
-        .simultaneousGesture(TapGesture(count: 2).onEnded { Task { await open(f.path, reveal: false) } })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { Task { await model.openShared(f.path, reveal: false) } })
         .contextMenu {
-            Button("기본 앱으로 열기") { Task { await open(f.path, reveal: false) } }
-            Button("Finder에서 보기") { Task { await open(f.path, reveal: true) } }
+            Button("기본 앱으로 열기") { Task { await model.openShared(f.path, reveal: false) } }
+            Button("Finder에서 보기") { Task { await model.openShared(f.path, reveal: true) } }
         }
     }
 
@@ -73,12 +73,5 @@ struct SharedPanel: View {
         case .html: "globe"
         case .other: "doc"
         }
-    }
-
-    private func open(_ path: String?, reveal: Bool) async {
-        var a: [String: JSON] = ["reveal": .bool(reveal)]
-        if let path { a["path"] = .string(path) }
-        guard let r = try? await model.req("openShared", a), let p = r["path"]?.string else { return }
-        if r["reveal"]?.bool == true { MacActions.reveal(p) } else { MacActions.open(p) }
     }
 }

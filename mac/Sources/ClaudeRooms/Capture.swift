@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import WebKit
 
 /// 화면 캡처 모드(ROOMS_SCREENSHOT=<폴더>). 코어가 보내는 `capture:shot` 장면을 그리고 PNG 로 저장한다.
 @MainActor
@@ -42,7 +43,7 @@ final class CaptureDriver {
         last = (view, opts, dark)
         await applyUI(ui)
         try? await Task.sleep(for: .milliseconds(500))
-        do { try snapshot(to: dir.appendingPathComponent("\(name).png")) }
+        do { try await snapshot(to: dir.appendingPathComponent("\(name).png")) }
         catch {
             failed = true
             FileHandle.standardError.write(Data("캡처 실패(\(name)): \(error)\n".utf8))
@@ -90,10 +91,37 @@ final class CaptureDriver {
         }
     }
 
-    private func snapshot(to url: URL) throws {
-        guard let window = NSApp.windows.first(where: { $0.contentView != nil && $0.isVisible }), let view = window.contentView else {
-            throw CocoaError(.fileNoSuchFile)
+    /// 창 내용을 PNG 로 저장한다. 맥 기본 시트는 별도 창이라 창 내용에 안 찍히므로 시트 창을 따로 그려 제자리에 얹는다
+    private func snapshot(to url: URL) async throws {
+        guard let window = NSApp.windows.first(where: { $0.contentView != nil && $0.isVisible && $0.sheetParent == nil && !($0 is NSPanel) }),
+              let view = window.contentView else { throw CocoaError(.fileNoSuchFile) }
+        let main = try await render(view)
+        if let sheet = window.attachedSheet, let sv = sheet.contentView {
+            let sheetRep = try await render(sv)
+            let origin = Self.offset(of: sv, in: view, sheetFrame: window.convertFromScreen(sheet.frame))
+            Self.draw(into: main) {
+                let r = NSRect(origin: origin, size: sv.bounds.size)
+                NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).addClip()
+                sheetRep.draw(in: r)
+                NSColor.separatorColor.setStroke()
+                let border = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+                border.lineWidth = 1
+                border.stroke()
+            }
         }
+        guard let png = main.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+        try png.write(to: url)
+    }
+
+    /// 시트 내용 영역의 왼쪽 아래 모서리가 창 내용 영역 안에서 놓이는 곳(왼쪽 아래 기준)
+    private static func offset(of sheetContent: NSView, in main: NSView, sheetFrame: NSRect) -> NSPoint {
+        let mainRect = main.convert(main.bounds, to: nil)
+        let contentInSheet = sheetContent.convert(sheetContent.bounds, to: nil)
+        return NSPoint(x: sheetFrame.minX + contentInSheet.minX - mainRect.minX, y: sheetFrame.minY + contentInSheet.minY - mainRect.minY)
+    }
+
+    /// 뷰를 1배율 비트맵으로 그린다. WKWebView 는 cacheDisplay 에 안 찍히므로 takeSnapshot 으로 얹는다
+    private func render(_ view: NSView) async throws -> NSBitmapImageRep {
         view.layoutSubtreeIfNeeded()
         let b = view.bounds
         guard let rep = NSBitmapImageRep(
@@ -102,8 +130,25 @@ final class CaptureDriver {
         else { throw CocoaError(.fileWriteUnknown) }
         rep.size = b.size
         view.cacheDisplay(in: b, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
-        try png.write(to: url)
+        let viewRect = view.convert(b, to: nil)
+        for web in Self.webViews(in: view) {
+            let img = try await web.takeSnapshot(configuration: WKSnapshotConfiguration())
+            let r = web.convert(web.bounds, to: nil)
+            Self.draw(into: rep) { img.draw(in: NSRect(x: r.minX - viewRect.minX, y: r.minY - viewRect.minY, width: r.width, height: r.height)) }
+        }
+        return rep
+    }
+
+    private static func webViews(in view: NSView) -> [WKWebView] {
+        (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap { webViews(in: $0) }
+    }
+
+    private static func draw(into rep: NSBitmapImageRep, _ body: () -> Void) {
+        guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        body()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// 캡처 창 크기를 1100×728(콘텐츠)로 맞춘다

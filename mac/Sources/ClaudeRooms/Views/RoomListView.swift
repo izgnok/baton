@@ -66,19 +66,21 @@ struct RoomListView: View {
         .sheet(item: $sheet) { which in
             switch which {
             case .create:
-                InputSheet(
-                    title: "방 이름을 정해 주세요", label: "방 이름", placeholder: "예: 결제 개선", submitLabel: "방 만들기",
-                    onSubmit: { name in
-                        let room = try await app.call("createRoom", .object(["name": .string(name)]), toast: false)
+                FormSheet(
+                    title: "방 이름을 정해 주세요", submitLabel: "방 만들기",
+                    fields: [.init(id: "name", label: "방 이름", placeholder: "예: 결제 개선")],
+                    onSubmit: { v in
+                        let room = try await app.call("createRoom", .object(["name": .string(v["name"] ?? "")]), toast: false)
                         app.toast("방을 만들었어요")
                         if let id = room["id"]?.int { app.openRoom(id) }
                     })
             case .join:
-                InputSheet(
-                    title: "초대 코드를 입력해 주세요", label: "초대 코드", placeholder: "ABC123", submitLabel: "참가하기",
+                FormSheet(
+                    title: "초대 코드를 입력해 주세요", submitLabel: "참가하기",
+                    fields: [.init(id: "code", label: "초대 코드", placeholder: "ABC123")],
                     errors: ["NOT_FOUND": "초대 코드를 찾을 수 없어요"],
-                    onSubmit: { code in
-                        let room = try await app.call("joinRoom", .object(["inviteCode": .string(code)]), toast: false)
+                    onSubmit: { v in
+                        let room = try await app.call("joinRoom", .object(["inviteCode": .string(v["code"] ?? "")]), toast: false)
                         app.toast("방에 참가했어요")
                         if let id = room["id"]?.int { app.openRoom(id) }
                     })

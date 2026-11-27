@@ -142,7 +142,7 @@ final class RoomModel {
     var scrollRequest: ScrollRequest?
     /// 공유 파일 경로 목록(공유 파일 탭)
     var shared: [String]?
-    /// 미리보기로 열 공유 파일 경로(보여 주는 시트는 다음 단계)
+    /// 미리보기 시트로 열 공유 파일 경로
     var preview: String?
     /// 내가 나가거나 지운 방의 삭제 알림은 따로 안내하지 않는다
     @ObservationIgnored var leaving = false
@@ -155,10 +155,11 @@ final class RoomModel {
     /// 레포 탭 상태
     @ObservationIgnored private(set) var repos: ReposModel!
 
-    init(roomId: Int, app: AppModel, tab: String = "repos") {
+    init(roomId: Int, app: AppModel, tab: String = "repos", preview: String? = nil) {
         self.roomId = roomId
         self.app = app
         self.tab = tab
+        self.preview = preview
         composer = ComposerModel(room: self, app: app)
         repos = ReposModel(room: self)
     }
@@ -300,6 +301,14 @@ final class RoomModel {
     func loadShared() async {
         guard let j = try? await app.call("listShared", .object(["roomId": .number(Double(roomId))])) else { return }
         shared = (j.array ?? []).compactMap { $0["path"]?.string }
+    }
+
+    /// 공유 파일(path 가 없으면 공유 폴더)을 기본 앱으로 열거나 Finder 에서 보여 준다
+    func openShared(_ path: String?, reveal: Bool) async {
+        var a: [String: JSON] = ["reveal": .bool(reveal)]
+        if let path { a["path"] = .string(path) }
+        guard let r = try? await req("openShared", a), let p = r["path"]?.string else { return }
+        if r["reveal"]?.bool == true { MacActions.reveal(p) } else { MacActions.open(p) }
     }
 
     /// 이 방 기준 코어 호출(roomId 를 자동으로 붙인다)

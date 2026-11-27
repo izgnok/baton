@@ -79,7 +79,18 @@ final class AppModel {
     var roomNames: [Int: String] = [:]
     /// 방별 알림 보관. 방 화면(RoomModel)이 만들어지면 넘긴다
     var roomEvents: [Int: [CoreEvent]] = [:]
-    var approvals: [JSON] = []
+    /// 답을 기다리는 승인 질문(맨 앞이 지금 뜬 시트)
+    private(set) var approvals: [ApprovalRequest] = []
+    /// 업데이트 적용 중(띠·시트 버튼이 함께 쓴다)
+    var updating = false
+    /// 지금 열린 시트(승인 창 제외). 시트가 trackSheet 로 알려 온다
+    private(set) var activeSheet: SheetKind = .none
+    /// [자세히] 시트 열림
+    var showUpdateDetail = false
+    /// 입력·확인 시트가 열려 있어 승인 창이 기다리는 중(띠가 알린다)
+    var approvalBlocked: Bool {
+        !approvals.isEmpty && approvalPresenter.window == nil && SheetPolicy.onApproval(open: activeSheet) == .waitWithBanner
+    }
     /// 방별 승인 대기(방 화면이 열리기 전에 온 알림도 놓치지 않는다). roomId → requestId → 대기 정보
     var roomApprovals: [Int: [Int: ApprovalWait]] = [:]
     /// 방 목록 첫 읽기가 끝났는지(캡처가 기다린다)
@@ -94,6 +105,7 @@ final class AppModel {
     @ObservationIgnored private var nodePath: String?
     @ObservationIgnored private var loginPath: String?
     @ObservationIgnored private var capture: CaptureDriver?
+    @ObservationIgnored let approvalPresenter = ApprovalPresenter()
     /// 지금 열린 방 화면(캡처가 화면 조작을 넘긴다)
     @ObservationIgnored weak var currentRoom: RoomModel?
 
@@ -267,10 +279,14 @@ final class AppModel {
                 roomsVersion += 1
             }
         case "approval:ask":
-            approvals.append(p)
+            guard let r = ApprovalRequest(p) else { break }
+            approvals.append(r)
+            approvalPresenter.sync(self)
+            if let rid = r.roomId, roomNames[rid] == nil { Task { await loadRoomNames() } }
         case "approval:close":
-            let rid = p["requestId"]
-            approvals.removeAll { $0["requestId"] == rid }
+            let rid = p["requestId"]?.int
+            approvals.removeAll { $0.requestId == rid }
+            approvalPresenter.sync(self)
         case "conn:status":
             connected = p["connected"]?.bool ?? true
             if p["reason"]?.string == "UNAUTHENTICATED" {
@@ -367,7 +383,43 @@ final class AppModel {
         if update.count == 0 { toast("최신 버전이에요") }
     }
 
+    /// 업데이트 적용. 실패 문구는 call 이 토스트로 알린다
     func applyUpdate() async {
+        updating = true
+        defer { updating = false }
         _ = try? await call("applyUpdate", timeout: nil)
+    }
+
+    func sheetOpened(_ kind: SheetKind) { activeSheet = kind }
+
+    /// 시트가 닫히면 기다리던 승인 창을 띄운다
+    func sheetClosed(_ kind: SheetKind) {
+        guard activeSheet == kind else { return }
+        activeSheet = .none
+        approvalPresenter.sync(self)
+    }
+
+    /// 읽기만 하는 시트를 닫는다(승인 요청이 왔을 때)
+    func closeReadOnlySheet() {
+        switch activeSheet {
+        case .preview: currentRoom?.preview = nil
+        case .update: showUpdateDetail = false
+        default: break
+        }
+    }
+
+    /// 승인 시트의 [허용]·[거부]
+    func answerApproval(_ r: ApprovalRequest, allow: Bool) {
+        approvals.removeAll { $0.id == r.id }
+        approvalPresenter.sync(self)
+        Task { _ = try? await call("answerApproval", .object(["id": .string(r.id), "decision": .string(allow ? "allow" : "deny")]), toast: false) }
+    }
+
+    /// 방 이름을 아직 모를 때(승인 시트 부제) 방 목록에서 채운다
+    private func loadRoomNames() async {
+        guard let j = try? await call("listRooms", toast: false) else { return }
+        for r in j["rooms"]?.array ?? [] {
+            if let id = r["id"]?.int, let name = r["name"]?.string { roomNames[id] = name }
+        }
     }
 }
