@@ -51,6 +51,12 @@ struct UpdateState: Equatable {
     }
 }
 
+/// 승인 기다리는 중인 요청(run.approval)
+struct ApprovalWait: Equatable {
+    var userName: String
+    var toolName: String
+}
+
 extension JSON {
     var number: Double? { if case .number(let v) = self { v } else { nil } }
 }
@@ -74,6 +80,8 @@ final class AppModel {
     /// 방별 알림 보관. 방 화면(RoomModel)이 만들어지면 넘긴다
     var roomEvents: [Int: [CoreEvent]] = [:]
     var approvals: [JSON] = []
+    /// 방별 승인 대기(방 화면이 열리기 전에 온 알림도 놓치지 않는다). roomId → requestId → 대기 정보
+    var roomApprovals: [Int: [Int: ApprovalWait]] = [:]
     /// 방 목록 첫 읽기가 끝났는지(캡처가 기다린다)
     var roomsLoaded = false
     var claudeLoaded = false
@@ -86,6 +94,8 @@ final class AppModel {
     @ObservationIgnored private var nodePath: String?
     @ObservationIgnored private var loginPath: String?
     @ObservationIgnored private var capture: CaptureDriver?
+    /// 지금 열린 방 화면(캡처가 화면 조작을 넘긴다)
+    @ObservationIgnored weak var currentRoom: RoomModel?
 
     static let defaultHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude-rooms")
 
@@ -244,8 +254,12 @@ final class AppModel {
         switch e.name {
         case "rooms:event":
             let type = p["type"]?.string
-            let roomId = p["roomId"]?.int ?? p["state"]?["room"]?["id"]?.int
-            if let roomId { roomEvents[roomId, default: []].append(e) }
+            let roomId = p["roomId"]?.int ?? p["state"]?["room"]?["id"]?.int ?? p["message"]?["roomId"]?.int
+            if let roomId {
+                roomEvents[roomId, default: []].append(e)
+                if roomEvents[roomId, default: []].count > 500 { roomEvents[roomId]?.removeFirst(100) } // 안 열린 방의 알림이 쌓이지 않게
+            }
+            if let roomId { trackApproval(type: type, roomId: roomId, p) }
             if type == "room.state" {
                 if let id = p["state"]?["room"]?["id"]?.int, let name = p["state"]?["room"]?["name"]?.string { roomNames[id] = name }
                 roomsVersion += 1
@@ -276,6 +290,32 @@ final class AppModel {
         default:
             break
         }
+    }
+
+    /// run.approval 알림과, 끝난 요청의 대기 표시 지우기
+    private func trackApproval(type: String?, roomId: Int, _ p: JSON) {
+        switch type {
+        case "run.approval":
+            guard let rid = p["requestId"]?.int else { return }
+            if p["state"]?.string == "pending" {
+                roomApprovals[roomId, default: [:]][rid] = ApprovalWait(userName: p["userName"]?.string ?? "", toolName: p["toolName"]?.string ?? "")
+            } else {
+                roomApprovals[roomId]?[rid] = nil
+            }
+        case "message.new", "message.update":
+            if let m = p["message"], m["kind"]?.string == "claude_request", m["status"]?.string != "running", let id = m["id"]?.int {
+                roomApprovals[roomId]?[id] = nil
+            }
+        default:
+            break
+        }
+    }
+
+    /// 방 알림을 꺼내 가면서 비운다
+    func takeRoomEvents(_ roomId: Int) -> [CoreEvent] {
+        guard let events = roomEvents[roomId], !events.isEmpty else { return [] }
+        roomEvents[roomId] = nil
+        return events
     }
 
     // MARK: 로그인·로그아웃·화면

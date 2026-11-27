@@ -30,15 +30,17 @@ final class CaptureDriver {
         let view = p["view"]?.string ?? "login"
         let opts = p["opts"] ?? .object([:])
         let dark = p["dark"]?.bool ?? false
+        let ui = p["ui"] ?? .object([:])
 
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        // 앞 장면과 화면·옵션·다크가 같으면 다시 열지 않는다(ui 는 방 화면이 생기면 적용)
+        // 앞 장면과 화면·옵션·다크가 같으면 다시 열지 않고 ui 만 적용한다
         if let l = last, l.view == view, l.opts == opts, l.dark == dark {
             // 같은 화면에 ui 만 바뀜
         } else {
             await show(view, opts)
         }
         last = (view, opts, dark)
+        await applyUI(ui)
         try? await Task.sleep(for: .milliseconds(500))
         do { try snapshot(to: dir.appendingPathComponent("\(name).png")) }
         catch {
@@ -61,8 +63,26 @@ final class CaptureDriver {
         case "room":
             await app.ensureUser()
             app.screen = .room(id: opts["roomId"]?.int ?? 0, tab: opts["tab"]?.string ?? "repos", preview: opts["preview"]?.string)
+            // 방 화면이 만들어져 불러오기를 마칠 때까지(최대 5초), 그 뒤 Electron 캡처처럼 1.2초(미리보기는 +0.8초) 더 기다린다
+            try? await Task.sleep(for: .milliseconds(100))
+            for _ in 0..<50 where !(app.currentRoom?.loaded ?? false) { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .milliseconds(1200 + (opts["preview"] != nil ? 800 : 0)))
         default:
             break
+        }
+    }
+
+    /// 장면의 ui: codeDiffOpen(diff 펼침·접힘), scrollTo('top'·'codeCard')
+    private func applyUI(_ ui: JSON) async {
+        guard let room = app.currentRoom else { return }
+        if let open = ui["codeDiffOpen"]?.bool {
+            room.setAllDiffs(open: open)
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        switch ui["scrollTo"]?.string {
+        case "codeCard": room.scroll(.codeCard)
+        case "top": room.scroll(.top)
+        default: break
         }
     }
 
