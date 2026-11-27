@@ -122,3 +122,33 @@ test('updateRepo 는 넘긴 것만 바꾸고 빈 값은 INVALID_INPUT, remoteUrl
   assert.deepEqual(R.getRoomState(db, a, room.id).repos, []);
   assert.throws(() => R.removeRepo(db, a, repo.id), { message: 'NOT_FOUND' });
 });
+
+test('옛 스키마 DB 를 열면 default_model·default_effort 칸이 생기고 데이터는 남는다', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-old-'));
+  const file = path.join(dir, 'rooms.db');
+  try {
+    const old = new DatabaseSync(file);
+    old.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE rooms (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, invite_code TEXT NOT NULL UNIQUE,
+        owner_id INTEGER NOT NULL REFERENCES users(id), claude_session_id TEXT, transcript_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+      INSERT INTO users (email, password_hash, name, created_at) VALUES ('a@x.com', 'h', 'a', 1);
+      INSERT INTO rooms (name, invite_code, owner_id, created_at) VALUES ('옛 방', 'OLD123', 1, 1);
+    `);
+    old.close();
+    const db = openDb(file);
+    const cols = db.prepare('PRAGMA table_info(rooms)').all().map((c) => c.name);
+    assert.ok(cols.includes('default_model') && cols.includes('default_effort'));
+    const row = db.prepare('SELECT * FROM rooms WHERE id = 1').get();
+    assert.equal(row.name, '옛 방');
+    assert.equal(row.default_model, null);
+    db.close();
+    openDb(file).close(); // 다시 열어도 문제없다(이미 있는 칸은 건너뜀)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -10,7 +10,9 @@ const calls = [
   'getConfig', 'signup', 'login', 'logout', 'claudeStatus', 'claudeLogin',
   'listRooms', 'createRoom', 'joinRoom', 'leaveRoom', 'openRoom', 'renameRoom', 'regenerateInvite', 'deleteRoom',
   'sendMessage', 'retry', 'addRepo', 'updateRepo', 'removeRepo',
-  'checkRepos', 'linkRepo', 'cloneRepo', 'pickFolder', 'listShared', 'readShared', 'answerApproval',
+  'checkRepos', 'linkRepo', 'cloneRepo', 'inspectRepo', 'pickFolder', 'openFolder', 'listShared', 'readShared', 'answerApproval',
+  'cancelRequest', 'rescanRepos', 'listReadDirs', 'addReadDir', 'removeReadDir', 'listSkills', 'listRepoFiles',
+  'setRoomModel', 'setRoomSettings', 'getUsage', 'checkUpdate', 'applyUpdate',
 ];
 
 const subscribe = (channel) => (fn) => {
@@ -25,4 +27,6 @@ contextBridge.exposeInMainWorld('rooms', {
   onApproval: subscribe('approval:ask'),
   onApprovalClose: subscribe('approval:close'),
   onStatus: subscribe('conn:status'),
+  onUsage: subscribe('usage'),
+  onUpdate: subscribe('update'),
 });

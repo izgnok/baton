@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { gitRead, loadAllowedRepos } from './gitRead.js';
 
 const port = process.env.ROOMS_APPROVE_PORT;
 const secret = process.env.ROOMS_APPROVE_SECRET ?? '';
@@ -33,5 +34,20 @@ server.registerTool(
     inputSchema: { tool_name: z.string(), input: z.any(), tool_use_id: z.string().optional() },
   },
   async (args) => ({ content: [{ type: 'text', text: JSON.stringify(await decide(args)) }] }),
+);
+server.registerTool(
+  'git_read',
+  {
+    description: 'Read-only git on an allowed local repository (fetch origin <branch>, show, grep, ls-tree, log, diff, rev-parse, branch -r/-a/--list, cat-file -p/-t/-s). repo is this PC\'s path of the repository.',
+    inputSchema: { repo: z.string(), args: z.array(z.string()) },
+  },
+  async ({ repo, args }) => {
+    try {
+      const text = await gitRead({ repo, args, allowed: loadAllowedRepos(process.env.ROOMS_READ_REPOS) });
+      return { content: [{ type: 'text', text: text || '(출력 없음)' }] };
+    } catch (e) {
+      return { isError: true, content: [{ type: 'text', text: e.message }] };
+    }
+  },
 );
 await server.connect(new StdioServerTransport());

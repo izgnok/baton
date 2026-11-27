@@ -58,6 +58,33 @@ test('옵션은 각각 정확한 인자로 들어간다', async () => {
   ]);
 });
 
+test('env 는 환경 변수에 더해지고, allowedTools 는 한 개씩 인자로 들어간다', async () => {
+  const { rec } = await run('stream-ok.jsonl', {
+    env: { EXTRA_FLAG: 'on' }, allowedTools: ['mcp__rooms__git_read', 'Read(//a/**)'],
+  });
+  assert.deepEqual(rec.argv, [
+    '-p', '--output-format', 'stream-json', '--verbose', '--allowedTools', 'mcp__rooms__git_read', 'Read(//a/**)',
+  ]);
+  assert.equal(rec.extraFlag, 'on');
+});
+
+test('model·effort 는 있을 때만 --model·--effort 로, 빈 값이면 안 붙는다', async () => {
+  const withBoth = await run('stream-ok.jsonl', { model: 'opus', effort: 'high' });
+  assert.deepEqual(withBoth.rec.argv, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'opus', '--effort', 'high']);
+  const empty = await run('stream-ok.jsonl', { model: '', effort: undefined });
+  assert.equal(empty.rec.argv.includes('--model') || empty.rec.argv.includes('--effort'), false);
+});
+
+test('API 키 환경 변수는 자식에게 넘기지 않는다(env 옵션으로 줘도)', async () => {
+  const { rec } = await run('stream-ok.jsonl', {
+    env: { ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_AUTH_TOKEN: 'tok-test' },
+  });
+  assert.equal(rec.apiKey, null);
+  assert.equal(rec.authToken, null);
+  Object.assign(process.env, { ANTHROPIC_API_KEY: 'sk-parent' });
+  try { assert.equal((await run('stream-ok.jsonl', { env: { EXTRA_FLAG: 'x' } })).rec.apiKey, null); } finally { delete process.env.ANTHROPIC_API_KEY; }
+});
+
 test('중간에 죽으면 CLAUDE_EXIT_1, 그 전 이벤트와 sessionId 는 남는다', async () => {
   await assert.rejects(run('stream-crash.jsonl', { env: { FAKE_EXIT: '1', FAKE_STDERR: 'boom' } }), (err) => {
     assert.equal(err.message, 'CLAUDE_EXIT_1');

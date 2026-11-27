@@ -34,9 +34,9 @@ function readJson(req, res) {
 }
 
 /**
- * @param {{db: import('node:sqlite').DatabaseSync, files: ReturnType<typeof import('./files.js').createFileStore>}} deps
+ * @param {{db: import('node:sqlite').DatabaseSync, files: ReturnType<typeof import('./files.js').createFileStore>, commit?: string|null}} deps
  */
-export function createHttpHandler({ db, files }) {
+export function createHttpHandler({ db, files, commit = null }) {
   async function auth(req, res, isSignup) {
     const body = await readJson(req, res);
     if (!body) return;
@@ -72,6 +72,7 @@ export function createHttpHandler({ db, files }) {
     if (req.method === 'POST' && (url.pathname === '/signup' || url.pathname === '/login')) {
       return void auth(req, res, url.pathname === '/signup');
     }
+    if (req.method === 'GET' && url.pathname === '/version') return send(res, 200, { commit });
     const m = /^\/rooms\/(\d+)\/(transcript|shared-manifest|shared)$/.exec(url.pathname);
     if (req.method === 'GET' && m) return roomFile(req, res, url, m);
     return fail(res, 404, 'NOT_FOUND');

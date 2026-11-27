@@ -1,0 +1,6 @@
+{"type":"system","subtype":"hook_started","hook_name":"SessionStart:startup","session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"system","subtype":"hook_started","hook_name":"SessionStart:resume","session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"system","subtype":"init","cwd":"/x","model":"m","session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795694400,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.21,"resetsAt":1795694400,"status":"allowed"},"seven_day":{"utilization":0.57,"resetsAt":1795960800,"status":"allowed"}}},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"11111111-2222-3333-4444-555555555555","permission_denials":[]}

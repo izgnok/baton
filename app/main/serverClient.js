@@ -1,7 +1,11 @@
 import WebSocket from 'ws';
 import { MSG } from '@rooms/shared/protocol.js';
 
-const trim = (url) => String(url).replace(/\/+$/, '');
+// 끝의 / 를 떼고, 스킴이 없으면 http:// 를 붙인다(`10.0.0.5:4310` 처럼 입력해도 되게)
+const trim = (url) => {
+  const s = String(url).trim().replace(/\/+$/, '');
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `http://${s}`;
+};
 
 async function authPost(serverUrl, route, body) {
   let res;
@@ -20,6 +24,16 @@ export const signup = (serverUrl, { email, password, name }) => authPost(serverU
 
 /** 로그인 → {token, user} */
 export const login = (serverUrl, { email, password }) => authPost(serverUrl, '/login', { email, password });
+
+/** 서버가 시작할 때 정한 git commit(짧은 해시). 모르면 null */
+export async function getServerCommit(serverUrl) {
+  try {
+    const res = await fetch(`${trim(serverUrl)}/version`);
+    return (await res.json()).commit ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 서버 웹소켓 클라이언트. 끊기면 자동 재연결하고, 인증 실패는 재연결하지 않는다
@@ -141,8 +155,21 @@ export function createServerClient({ serverUrl, token, WebSocketImpl = WebSocket
     http,
     get connected() { return connected; },
     request(type, payload = {}) {
-      if (!connected) return Promise.reject(new Error('DISCONNECTED'));
-      return rawRequest(ws, type, payload);
+      if (connected) return rawRequest(ws, type, payload);
+      if (closed || authFailed) return Promise.reject(new Error('DISCONNECTED'));
+      // 연결 중(로그인 직후·재연결 중)이면 5초까지 기다렸다가 보낸다
+      return new Promise((resolve, reject) => {
+        const set = listeners.get('status') ?? new Set();
+        listeners.set('status', set);
+        const onStatus = (s) => {
+          if (!s.connected) return;
+          clearTimeout(t);
+          set.delete(onStatus);
+          rawRequest(ws, type, payload).then(resolve, reject);
+        };
+        const t = setTimeout(() => { set.delete(onStatus); reject(new Error('DISCONNECTED')); }, 5000);
+        set.add(onStatus);
+      });
     },
     /** 서버 알림 구독. 'status' 는 {connected}, '*' 는 모든 알림. 해제 함수를 돌려준다 */
     on(type, fn) {

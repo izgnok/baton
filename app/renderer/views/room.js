@@ -1,8 +1,14 @@
 import { h, button } from '../dom.js';
-import { errorText, failText, STATUS_TEXT, formatTime, renderMarkdown } from '../format.js';
+import { errorText, failText, STATUS_TEXT, formatTime, formatDate, renderMarkdown, personIndex, initial, memberSummary, modelLabel, effortLabel } from '../format.js';
 import { openSheet, inputSheet, confirmSheet } from './sheet.js';
+import { attachAutocomplete } from './autocomplete.js';
+import { codeCard } from './codeChanges.js';
+import { usageBars } from './usage.js';
 
-const MENTION = /^\s*@claude(?=\s|$)/i; // shared/protocol.js 와 같은 규칙
+const CLAUDE_START = /^\s*(@claude(?=\s|$)|\/)/i; // shared/protocol.js parseClaudeMention 과 같은 규칙
+const MODELS = ['opus', 'sonnet', 'haiku', 'fable'];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PLACEHOLDER = { claude: 'Claude 에게 · / 로 명령·스킬, @ 로 파일', human: '사람끼리만 · Claude 는 보지 않아요' };
 const PREVIEW_LIMIT = 200 * 1024;
 const TABS = [['repos', '레포'], ['shared', '공유 파일'], ['members', '멤버']];
 
@@ -20,6 +26,14 @@ function toolSummary(c) {
 }
 
 const toJson = (v) => { try { return JSON.stringify(v, null, 2) ?? ''; } catch { return String(v); } };
+
+const KEPT_TEXT = { DIRTY: '커밋 안 된 변경이 있어요', UNPUSHED: 'push 안 된 커밋이 있어요', NO_SOURCE: '원본 폴더 연결이 없어요', FAILED: '정리하지 못했어요' };
+
+// 남겨 둔 방 작업 폴더가 있으면 안내를 붙인다
+const keptNote = (text, res) => {
+  const kept = res?.keptWorktrees ?? [];
+  return kept.length ? `${text}. 방 작업 폴더 ${kept.map((k) => `${k.name}(${KEPT_TEXT[k.reason] ?? k.reason})`).join(', ')}는 남겨 뒀어요` : text;
+};
 
 function decodeBase64(b64, limit) {
   const bin = atob(b64);
@@ -41,9 +55,21 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   let repoLoading = false;
   const cloning = new Set();
   let shared = null;
+  let memberStatus = {}; // userId → {repos, readDirs, claude}
+  let myModel = { model: '', effort: '' }; // 이 PC 에 저장된 내 선택(빈 값 = 방 기본)
+  let readDirs = [];
+  let indexedAt = null;
+  let rescanning = false;
+  let skillsP = null;
+  let mode = loadMode();
   const openTools = new Set();
+  const openDiffs = new Set();
   const approvals = new Map(); // requestId → {userName, toolName}
 
+  const modeKey = `rooms.mode.${roomId}`;
+  function loadMode() {
+    try { return localStorage.getItem(`rooms.mode.${roomId}`) === 'human' ? 'human' : 'claude'; } catch { return 'claude'; }
+  }
   const me = () => ctx.user?.id;
   const isOwner = () => !!state?.members.find((m) => m.userId === me())?.isOwner;
   const fail = (e) => ctx.toast(errorText(e.message));
@@ -52,14 +78,28 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   // ---------- 뼈대 ----------
   const nameEl = h('div', { class: 'room-name' });
   const countEl = h('span', { class: 'sub' });
+  const usageBox = h('div', { class: 'usage-slot' });
   const messagesEl = h('div', { class: 'messages' });
   const noteEl = h('p', { class: 'composer-note', hidden: true });
-  const input = h('textarea', { rows: '1', placeholder: '메시지 · @claude 로 시작하면 Claude 에게 요청해요' });
+  const input = h('textarea', { rows: '1', placeholder: PLACEHOLDER[mode] });
   const sendBtn = button('보내기', 'primary', send);
+  const modeEl = h('div', { class: 'seg' });
+  const modelBar = h('div', { class: 'composer-tools-model' });
   const tabsEl = h('div', { class: 'tabs' });
   const panelBody = h('div', { class: 'panel-body' });
   const panelFoot = h('div', { class: 'panel-foot' });
+  const composer = h('div', { class: 'composer' },
+    h('div', { class: 'composer-tools' }, modeEl, modelBar),
+    h('div', { class: 'composer-row' }, input, sendBtn));
 
+  // 자동완성이 Enter 를 먼저 받도록 보내기 키 처리보다 앞에 붙인다
+  attachAutocomplete({
+    input, host: composer,
+    getMembers: () => (state?.members ?? []).filter((m) => m.userId !== me()).map((m) => m.name),
+    getShared: sharedList,
+    getSkills: () => (skillsP ??= window.rooms.listSkills({ roomId })),
+    searchRepoFiles: (query) => window.rooms.listRepoFiles({ roomId, query }),
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
@@ -67,10 +107,54 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
 
   root.append(h('div', { class: 'screen' },
     h('div', { class: 'room-head' },
-      h('button', { type: 'button', class: 'btn-text', onclick: () => ctx.go('rooms') }, '← 목록'), nameEl, countEl),
+      h('button', { type: 'button', class: 'btn-text', onclick: () => ctx.go('rooms') }, '← 목록'), nameEl, usageBox, countEl),
     h('div', { class: 'room-body' },
-      h('section', { class: 'chat' }, messagesEl, noteEl, h('div', { class: 'composer' }, input, sendBtn)),
+      h('section', { class: 'chat' }, messagesEl, noteEl, composer),
       h('aside', { class: 'panel' }, tabsEl, panelBody, panelFoot))));
+
+  function renderUsage() { usageBox.replaceChildren(usageBars(ctx.usage, { compact: true })); }
+
+  function setMode(next) {
+    mode = next;
+    try { localStorage.setItem(modeKey, mode); } catch { /* 저장 못 해도 이번 화면에서는 동작 */ }
+    renderMode();
+    input.focus();
+  }
+  function renderMode() {
+    input.placeholder = PLACEHOLDER[mode];
+    modeEl.replaceChildren(...[['claude', 'Claude'], ['human', '사람']].map(([k, label]) =>
+      h('button', { type: 'button', class: mode === k ? 'on' : '', onclick: () => setMode(k) }, label)));
+  }
+
+  // 모델·노력 단계: 개인 선택 → 방 기본 → 내 Claude 설정
+  function selectEl(options, labelOf, value, emptyLabel, onChange) {
+    const list = value && !options.includes(value) ? [...options, value] : options; // 저장된 값이 목록에 없어도 보이게
+    const el = h('select', { class: 'pick' },
+      h('option', { value: '' }, emptyLabel), list.map((o) => h('option', { value: o }, labelOf(o) || o)));
+    el.value = value;
+    el.addEventListener('change', () => onChange(el.value));
+    return el;
+  }
+  const modelSummary = (m, e) => [modelLabel(m), effortLabel(e)].filter(Boolean).join(' · ') || '내 Claude 설정';
+
+  function saveMyModel(next) {
+    myModel = next;
+    window.rooms.setRoomModel({ roomId, ...myModel }).catch(fail);
+    renderModelBar();
+  }
+  function renderModelBar() {
+    if (!state) return;
+    const dM = state.room.defaultModel ?? '';
+    const dE = state.room.defaultEffort ?? '';
+    const differs = (myModel.model && myModel.model !== dM) || (myModel.effort && myModel.effort !== dE);
+    modelBar.replaceChildren(...[
+      selectEl(MODELS, modelLabel, myModel.model, dM ? `모델 · 방 기본(${modelLabel(dM)})` : '모델 · 내 설정', (v) => saveMyModel({ ...myModel, model: v })),
+      selectEl(EFFORTS, effortLabel, myModel.effort, dE ? `노력 · 방 기본(${effortLabel(dE)})` : '노력 · 내 설정', (v) => saveMyModel({ ...myModel, effort: v })),
+      differs ? h('span', { class: 'model-note' },
+        `방 기본: ${modelSummary(dM, dE)} · 나: ${modelSummary(myModel.model || dM, myModel.effort || dE)}`,
+        small('방 기본으로', () => saveMyModel({ model: '', effort: '' }), 'is-accent')) : null,
+    ].filter(Boolean));
+  }
 
   function autosize() {
     input.style.height = '56px';
@@ -90,19 +174,27 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     else { messages.push(msg); messages.sort((a, b) => a.id - b.id); }
   }
 
-  function bubbleItem(m, text) {
+  // 사람 메시지는 모두 오른쪽. 내 것은 강조색, 남의 것은 사람별 고정 색
+  function bubbleItem(m, text, { toClaude = false } = {}) {
     const mine = m.userId === me();
-    return h('div', { class: `msg ${mine ? 'mine' : 'other'}` },
-      mine ? null : h('div', { class: 'who' }, m.userName ?? '알 수 없음'),
-      h('div', { class: 'msg-line' }, h('div', { class: 'bubble' }, text), h('span', { class: 'time' }, formatTime(m.createdAt))));
+    const who = [mine ? null : h('span', {}, m.userName ?? '알 수 없음'), toClaude ? h('span', { class: 'to-claude' }, 'Claude 에게') : null].filter(Boolean);
+    return h('div', { class: `msg ${mine ? 'mine' : `p${personIndex(m.userId)}`}` },
+      who.length ? h('div', { class: 'who' }, who) : null,
+      h('div', { class: 'msg-line' },
+        h('div', { class: 'avatar', 'aria-hidden': 'true' }, initial(m.userName)),
+        h('div', { class: 'bubble' }, text),
+        h('span', { class: 'time' }, formatTime(m.createdAt))));
   }
 
   function requestItem(m) {
     const mine = m.userId === me();
-    const el = bubbleItem(m, `@claude ${m.body}`);
+    const el = bubbleItem(m, m.body, { toClaude: true });
     const meta = h('div', { class: 'req-meta' }, h('span', { class: `badge ${m.status}` }, STATUS_TEXT[m.status] ?? m.status));
-    const retryable = m.status === 'failed' || m.status === 'held';
-    if (retryable && m.error) meta.append(h('span', { class: 'reason' }, failText(m.error)));
+    const retryable = m.status === 'failed' || m.status === 'held' || m.status === 'cancelled';
+    if ((m.status === 'failed' || m.status === 'held') && m.error) meta.append(h('span', { class: 'reason' }, failText(m.error)));
+    if (['queued', 'running', 'held'].includes(m.status) && (mine || isOwner())) {
+      meta.append(small('중단', () => window.rooms.cancelRequest({ requestId: m.id }).catch(fail), 'is-danger'));
+    }
     if (retryable && mine) meta.append(small('다시 보내기', () => window.rooms.retry({ requestId: m.id }).catch(fail), 'is-accent'));
     const ap = m.status === 'running' ? approvals.get(m.id) : null;
     if (ap) meta.append(h('span', { class: 'approval-wait' }, `${ap.userName} 님 승인 대기 중 · ${ap.toolName}`));
@@ -125,22 +217,30 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
 
   function claudeBlock(req, events) {
     const parts = [];
+    const cards = [];
+    let model = null;
     for (const e of events ?? []) {
       let ev;
       try { ev = JSON.parse(e.body); } catch { continue; }
       if (ev.type === 'assistant') {
+        model ??= ev.message?.model ?? null;
         const content = ev.message?.content;
         if (typeof content === 'string') parts.push(markdownEl(content));
         else (content ?? []).forEach((c, i) => {
           if (c.type === 'text') parts.push(markdownEl(c.text));
           else if (c.type === 'tool_use') parts.push(toolItem(`${e.id}:${i}`, c));
         });
+      } else if (ev.type === 'rooms_code_changes') {
+        for (const r of ev.results ?? []) cards.push(codeCard(r, openDiffs, `${e.id}:${r.repoId}`));
       } else if (ev.type === 'result' && ev.is_error) {
         parts.push(h('div', { class: 'reason' }, typeof ev.result === 'string' && ev.result ? ev.result : 'Claude 실행 중 오류가 났어요'));
       }
     }
     if (!parts.length && req.status === 'running') parts.push(h('div', { class: 'sub' }, '작업하는 중이에요…'));
-    return parts.length ? h('div', { class: 'claude-block' }, h('div', { class: 'claude-label' }, 'Claude'), parts) : null;
+    if (!parts.length && !cards.length) return null;
+    return h('div', { class: 'claude-group' },
+      parts.length ? h('div', { class: 'claude-block' }, h('div', { class: 'claude-label' }, model ? `Claude · ${model}` : 'Claude'), parts) : null,
+      cards);
   }
 
   function renderMessages() {
@@ -160,9 +260,11 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   async function send() {
-    const text = input.value.trim();
-    if (sending || !text) return;
-    if (MENTION.test(text) && !ctx.claude?.loggedIn) {
+    const typed = input.value.trim();
+    if (sending || !typed) return;
+    // [Claude] 상태의 일반 글은 @claude 를 붙여 보낸다. / 로 시작하는 글은 어느 상태든 Claude 에게 간다
+    const text = mode === 'claude' && !CLAUDE_START.test(typed) ? `@claude ${typed}` : typed;
+    if (CLAUDE_START.test(text) && !ctx.claude?.loggedIn) {
       noteEl.textContent = 'Claude 로그인이 필요해요. 방 목록에서 Claude 로그인을 한 뒤 다시 보내 주세요';
       noteEl.hidden = false;
       return;
@@ -208,19 +310,44 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   // 레포
-  const BLOCK_TEXT = { MISSING: '폴더 없음', REMOTE_MISMATCH: '주소가 달라요' };
-  const WARN_TEXT = { DIRTY: '커밋 안 된 변경 있음', BEHIND: '원격보다 뒤처짐' };
+  const BLOCK_TEXT = { MISSING: '내 폴더를 연결해 주세요', REMOTE_MISMATCH: '고른 폴더의 원격 주소가 달라요' };
+
+  const setCheck = (res) => { repoCheck = res.results; indexedAt = res.indexedAt ?? null; };
 
   async function refreshRepos() {
     repoLoading = true;
     renderPanel();
-    try { repoCheck = (await window.rooms.checkRepos({ roomId })).results; } catch (e) { repoCheck = null; if (!destroyed) fail(e); }
+    try {
+      const [res, dirs] = await Promise.all([window.rooms.checkRepos({ roomId }), window.rooms.listReadDirs({ roomId }).catch(() => readDirs)]);
+      setCheck(res);
+      readDirs = dirs;
+    } catch (e) { repoCheck = null; if (!destroyed) fail(e); }
     repoLoading = false;
     if (!destroyed && curTab === 'repos') renderPanel();
   }
 
   async function repoAction(fn) {
-    try { repoCheck = (await fn()).results; } catch (e) { fail(e); }
+    try { setCheck(await fn()); } catch (e) { fail(e); }
+    if (!destroyed && curTab === 'repos') renderPanel();
+  }
+
+  async function rescan() {
+    rescanning = true;
+    renderPanel();
+    try { await window.rooms.rescanRepos(); } catch (e) { fail(e); }
+    rescanning = false;
+    if (!destroyed) await refreshRepos();
+  }
+
+  async function addDir() {
+    const p = await window.rooms.pickFolder().catch(() => null);
+    if (!p) return;
+    try { readDirs = await window.rooms.addReadDir({ roomId, path: p }); } catch (e) { fail(e); }
+    if (!destroyed && curTab === 'repos') renderPanel();
+  }
+
+  async function removeDir(p) {
+    try { readDirs = await window.rooms.removeReadDir({ roomId, path: p }); } catch (e) { fail(e); }
     if (!destroyed && curTab === 'repos') renderPanel();
   }
 
@@ -248,15 +375,15 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     const lines = [];
     if (!res) lines.push(h('div', { class: 'sub' }, repoLoading ? '확인하는 중…' : '상태를 확인하지 못했어요'));
     else {
-      lines.push(h('div', { class: 'path' }, `내 경로 · ${res.localPath ?? '연결 안 됨'}`));
-      lines.push(res.block
-        ? h('div', { class: 'status-bad' }, res.block === 'BRANCH_MISMATCH'
-          ? `브랜치가 달라요 — 지금 ${res.currentBranch || '알 수 없음'}` : BLOCK_TEXT[res.block])
-        : h('div', { class: 'status-ok' }, '정상'));
-      for (const w of res.warn ?? []) lines.push(h('div', { class: 'status-warn' }, WARN_TEXT[w] ?? w));
+      lines.push(h('div', { class: 'path' }, `내 원본 · ${res.localPath ?? '연결 안 됨'}`));
+      if (res.worktreeExists) lines.push(h('div', { class: 'path' }, `방 작업 폴더 · ${res.worktreePath}`));
+      if (res.indexed) lines.push(h('div', { class: 'chip-ok' }, '자동 연결됨'));
+      lines.push(res.block ? h('div', { class: 'status-bad' }, BLOCK_TEXT[res.block]) : h('div', { class: 'status-ok' }, '정상'));
+      if (res.protected) lines.push(h('div', { class: 'status-warn' }, '보호 브랜치라 자동으로 올리지 않아요'));
     }
     const busy = cloning.has(r.id);
     const row = h('div', { class: 'row' }, small('폴더 고르기', () => pick(r)));
+    if (res?.worktreeExists) row.append(small('폴더 열기', () => window.rooms.openFolder({ path: res.worktreePath }).catch(fail)));
     // clone 은 아직 폴더가 연결되지 않았을 때만 보여 준다
     if (!res?.localPath) {
       const btn = small(busy ? '받는 중…' : 'clone', () => clone(r), '');
@@ -270,8 +397,10 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
           onSubmit: async (v) => { await window.rooms.updateRepo({ repoId: r.id, ...v }); ctx.toast('레포를 수정했어요'); },
         })),
         small('삭제', async () => {
-          if (!await confirmSheet({ title: `${r.name} 레포를 삭제할까요?`, message: '방 설정에서만 빠지고, 내 컴퓨터의 폴더는 그대로예요', confirmLabel: '삭제', danger: true })) return;
-          window.rooms.removeRepo({ repoId: r.id }).then(() => ctx.toast('레포를 삭제했어요'), fail);
+          if (!await confirmSheet({ title: `${r.name} 레포를 삭제할까요?`, message: '방 설정에서 빠져요. 내 원본 폴더는 그대로고, 방 작업 폴더는 안 올린 변경이 없을 때만 지워요', confirmLabel: '삭제', danger: true })) return;
+          window.rooms.removeRepo({ repoId: r.id }).then(
+            (res) => ctx.toast(res?.keptWorktree ? `레포를 삭제했어요. 방 작업 폴더는 남겨 뒀어요 (${KEPT_TEXT[res.reason] ?? res.reason})` : '레포를 삭제했어요'),
+            fail);
         }, 'is-danger'));
     }
     return h('div', { class: 'mini-card' },
@@ -282,17 +411,47 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   function reposPanel() {
+    const found = indexedAt ? `마지막 찾은 시각 ${formatDate(indexedAt)} ${formatTime(indexedAt)}` : '아직 찾지 않았어요';
+    const rescanBtn = small(rescanning ? '찾는 중…' : '내 레포 다시 찾기', rescan);
+    rescanBtn.disabled = rescanning;
+    panelBody.append(h('div', { class: 'mini-card' }, h('div', { class: 'name' }, '내 컴퓨터의 레포'), h('div', { class: 'sub' }, rescanning ? '홈 폴더 아래를 찾는 중이에요' : found), rescanBtn));
     if (!state.repos.length) panelBody.append(h('div', { class: 'sub' }, '등록된 레포가 없어요'));
     panelBody.append(...state.repos.map(repoCard));
+    // 레포가 없는 방에서도 보인다
+    panelBody.append(h('div', { class: 'mini-card' },
+      h('div', { class: 'name' }, '함께 읽는 폴더'),
+      h('div', { class: 'sub' }, 'Claude 가 읽기만 하는 폴더예요'),
+      readDirs.length ? readDirs.map((d) => h('div', { class: 'dir-row' }, h('div', { class: 'path' }, d), small('빼기', () => removeDir(d), 'is-danger')))
+        : h('div', { class: 'sub' }, '아직 없어요'),
+      h('div', { class: 'row' }, small('폴더 추가', addDir))));
     if (isOwner()) {
-      panelFoot.append(button('레포 추가', 'secondary', () => inputSheet({
-        title: '레포 추가', fields: repoFields(), submitLabel: '추가',
-        onSubmit: async (v) => { await window.rooms.addRepo({ roomId, ...v }); ctx.toast('레포를 추가했어요'); },
-      })));
+      // 폴더를 먼저 고르면 이름·주소·브랜치를 채우고, 추가 뒤 내 폴더로 바로 연결한다
+      panelFoot.append(button('레포 추가', 'secondary', async () => {
+        const dir = await window.rooms.pickFolder().catch(() => null);
+        if (!dir) return;
+        let info;
+        try { info = await window.rooms.inspectRepo({ localPath: dir }); } catch {
+          ctx.toast('git 레포 폴더가 아니에요');
+          return;
+        }
+        inputSheet({
+          title: '레포 추가', fields: repoFields(info), submitLabel: '추가',
+          onSubmit: async (v) => {
+            const repo = await window.rooms.addRepo({ roomId, ...v });
+            await repoAction(() => window.rooms.linkRepo({ roomId, repoId: repo.id, localPath: info.localPath }));
+            ctx.toast('레포를 추가하고 내 폴더를 연결했어요');
+          },
+        });
+      }));
     }
   }
 
   // 공유 파일
+  async function sharedList() {
+    if (!shared) { try { shared = await window.rooms.listShared({ roomId }); } catch { return []; } }
+    return shared;
+  }
+
   async function loadShared() {
     renderPanel();
     try { shared = await window.rooms.listShared({ roomId }); } catch (e) { shared = null; if (!destroyed) fail(e); }
@@ -330,11 +489,29 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   }
 
   // 멤버
+  function saveRoomDefaults(patch) {
+    window.rooms.setRoomSettings({ roomId, ...patch }).then(() => ctx.toast('방 기본을 바꿨어요'), fail);
+  }
+
+  function roomSettingsCard() {
+    const { defaultModel: dM = '', defaultEffort: dE = '' } = state.room;
+    if (!isOwner()) return h('div', { class: 'mini-card' }, h('div', { class: 'name' }, '방 기본 모델·노력'), h('div', { class: 'sub' }, modelSummary(dM, dE)));
+    const sel = (options, labelOf, value, onChange) => selectEl(options, labelOf, value, '각자 Claude 설정', onChange);
+    return h('div', { class: 'mini-card room-settings' },
+      h('div', { class: 'name' }, '방 기본 모델·노력'),
+      h('div', { class: 'sub' }, '각자 입력창 옆에서 바꿔 쓸 수 있어요'),
+      sel(MODELS, modelLabel, dM, (v) => saveRoomDefaults({ defaultModel: v })),
+      sel(EFFORTS, effortLabel, dE, (v) => saveRoomDefaults({ defaultEffort: v })));
+  }
+
   function membersPanel() {
     const code = state.room.inviteCode;
     panelBody.append(
       h('div', { class: 'mini-card' }, state.members.map((m) =>
-        h('div', { class: 'member' }, h('span', {}, m.name), m.isOwner ? h('span', { class: 'owner-badge' }, '방장') : null))),
+        h('div', { class: 'member-block' },
+          h('div', { class: 'member' }, h('span', {}, m.name), m.isOwner ? h('span', { class: 'owner-badge' }, '방장') : null),
+          h('div', { class: 'member-sum' }, memberSummary(memberStatus[m.userId]))))),
+      roomSettingsCard(),
       h('div', { class: 'mini-card invite' },
         h('div', { class: 'sub' }, '초대 코드'),
         h('div', { class: 'code' }, code),
@@ -349,13 +526,13 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
         button('방 삭제', 'danger', async () => {
           if (!await confirmSheet({ title: '방을 삭제할까요?', message: '대화와 공유 파일이 모두 사라지고 되돌릴 수 없어요', confirmLabel: '삭제', danger: true })) return;
           leaving = true; // 내가 지운 방의 삭제 알림은 따로 안내하지 않는다
-          window.rooms.deleteRoom({ roomId }).then(() => leave('방을 삭제했어요'), (e) => { leaving = false; fail(e); });
+          window.rooms.deleteRoom({ roomId }).then((res) => leave(keptNote('방을 삭제했어요', res)), (e) => { leaving = false; fail(e); });
         }));
     }
     panelFoot.append(button('방 나가기', 'secondary', async () => {
       const msg = isOwner() ? '방장이 나가면 먼저 들어온 멤버가 방장이 돼요' : '나간 뒤에도 초대 코드로 다시 들어올 수 있어요';
       if (!await confirmSheet({ title: '방에서 나갈까요?', message: msg, confirmLabel: '나가기', danger: true })) return;
-      window.rooms.leaveRoom({ roomId }).then(() => leave('방에서 나왔어요'), fail);
+      window.rooms.leaveRoom({ roomId }).then((res) => leave(keptNote('방에서 나왔어요', res)), fail);
     }));
   }
 
@@ -363,6 +540,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   function renderHeader() {
     nameEl.textContent = state.room.name;
     countEl.textContent = `멤버 ${state.members.length}명`;
+    renderModelBar();
   }
 
   function applyState(s) {
@@ -377,6 +555,8 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
     const data = await window.rooms.openRoom({ roomId });
     if (destroyed) return;
     messages = data.messages;
+    memberStatus = data.memberStatus ?? {};
+    myModel = { model: data.myModel?.model ?? '', effort: data.myModel?.effort ?? '' };
     stick = true;
     renderMessages();
     applyState(data.state);
@@ -384,6 +564,8 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
 
   const ready = (async () => {
     renderTabs();
+    renderMode();
+    renderUsage();
     try { await load(); } catch (e) { fail(e); ctx.go('rooms'); return; }
     if (curTab === 'shared') await loadShared();
     if (previewPath) await openPreview(previewPath);
@@ -393,6 +575,7 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
   return {
     ready,
     onReconnect() { load().catch(() => {}); },
+    onUsage: renderUsage,
     onEvent(m) {
       if ((m.type === 'message.new' || m.type === 'message.update') && m.message.roomId === roomId) {
         const prev = messages.find((x) => x.id === m.message.id);
@@ -406,6 +589,11 @@ export function roomView(root, ctx, { roomId, tab = 'repos', preview: previewPat
         applyState(m.state);
       } else if (m.type === 'room.delete' && m.roomId === roomId) {
         if (!leaving) leave('방이 삭제됐어요');
+      } else if (m.type === 'member.status' && m.roomId === roomId) {
+        memberStatus = { ...memberStatus, [m.userId]: m.status };
+        if (curTab === 'members') renderPanel();
+      } else if (m.type === 'local.repos' && m.roomId === roomId) {
+        if (curTab === 'repos') refreshRepos();
       } else if (m.type === 'run.approval' && m.roomId === roomId) {
         if (m.state === 'pending') approvals.set(m.requestId, { userName: m.userName, toolName: m.toolName });
         else approvals.delete(m.requestId);

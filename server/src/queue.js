@@ -17,9 +17,10 @@ const toMessage = (m) => ({
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {{now?: () => number, isOnline: (userId: number) => boolean,
  *   dispatch: (userId: number, runStart: object) => void,
+ *   dispatchCancel?: (userId: number, requestId: number) => void,
  *   broadcast: (roomId: number, payload: object) => void}} deps
  */
-export function createQueue(db, { now = Date.now, isOnline, dispatch, broadcast }) {
+export function createQueue(db, { now = Date.now, isOnline, dispatch, dispatchCancel = () => {}, broadcast }) {
   const beats = new Map(); // requestId → 마지막 신호 시각
 
   const getMessage = (id) => {
@@ -184,10 +185,23 @@ export function createQueue(db, { now = Date.now, isOnline, dispatch, broadcast 
       const req = db.prepare("SELECT * FROM messages WHERE id = ? AND kind = 'claude_request'").get(requestId);
       if (!req) throw new Error('NOT_FOUND');
       if (req.user_id !== userId || !isMember(db, userId, req.room_id)) throw new Error('FORBIDDEN');
-      if (req.status !== 'held' && req.status !== 'failed') throw new Error('NOT_RETRYABLE');
+      if (!['held', 'failed', 'cancelled'].includes(req.status)) throw new Error('NOT_RETRYABLE');
       db.prepare("UPDATE messages SET status = 'queued', error = NULL, queued_at = ? WHERE id = ?")
         .run(now(), requestId);
       announce(requestId, MSG.MESSAGE_UPDATE);
+      pump(req.room_id);
+    },
+
+    /** 요청을 보낸 사람이나 방장이 대기·실행 중 요청을 중단한다 */
+    cancel(userId, requestId) {
+      const req = db.prepare("SELECT * FROM messages WHERE id = ? AND kind = 'claude_request'").get(requestId);
+      if (!req) throw new Error('NOT_FOUND');
+      const { owner_id: ownerId } = db.prepare('SELECT owner_id FROM rooms WHERE id = ?').get(req.room_id);
+      if (!isMember(db, userId, req.room_id) || (req.user_id !== userId && ownerId !== userId)) throw new Error('FORBIDDEN');
+      if (!['queued', 'held', 'running'].includes(req.status)) throw new Error('NOT_CANCELLABLE');
+      const wasRunning = req.status === 'running';
+      setStatus(requestId, 'cancelled'); // 실행 중이던 요청의 늦은 finish·event 는 NOT_RUNNING 으로 거부된다
+      if (wasRunning) dispatchCancel(req.user_id, requestId);
       pump(req.room_id);
     },
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { MSG } from '@rooms/shared/protocol.js';
 import { startServer } from '../../server/src/index.js';
-import { createServerClient, signup, login } from '../main/serverClient.js';
+import { createServerClient, signup, login, getServerCommit } from '../main/serverClient.js';
 
 let dataDir;
 let srv;
@@ -110,4 +110,17 @@ test('서버가 끊겼다 돌아오면 재연결하고, 끊긴 동안 request �
   srv = await startServer({ port, dataDir });
   await untilStatus(A, (s) => s.connected, 5000);
   assert.deepEqual((await A.request(MSG.ROOM_LIST)).rooms, []);
+});
+
+test('getServerCommit: 서버 /version 의 commit, 못 읽으면 null', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-ver-'));
+  const s2 = await startServer({ port: 0, dataDir: dir, commit: 'abc1234' });
+  try {
+    assert.equal(await getServerCommit(`http://localhost:${s2.port}`), 'abc1234');
+    assert.equal(await getServerCommit(`localhost:${s2.port}/`), 'abc1234'); // 스킴 없이 입력해도
+  } finally {
+    await s2.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(await getServerCommit(`http://localhost:${s2.port}`), null);
 });

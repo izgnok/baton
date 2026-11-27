@@ -21,6 +21,16 @@
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   --backdrop: rgba(25, 31, 40, 0.45);
 
+  /* 사람별 색 6개: 이름·아바타·말풍선(글자 대비 4.5:1 이상) */
+  --p0: #B45309; --p0-bg: #FFF1E0;
+  --p1: #15803D; --p1-bg: #E3F6E8;
+  --p2: #0F766E; --p2-bg: #DDF5F2;
+  --p3: #7C3AED; --p3-bg: #EEE8FD;
+  --p4: #BE185D; --p4-bg: #FDE7F1;
+  --p5: #B91C1C; --p5-bg: #FDE8E8;
+  --on-p: #FFFFFF;
+  --mine: var(--accent-press);
+
   --r-card: 16px;
   --r-btn: 12px;
   --r-bubble: 18px;
@@ -36,6 +46,13 @@
     --text: #ECECEF;
     --sub: #7E8590;
     --accent-soft: #1B2A44;
+    --p0: #FDBA74; --p0-bg: #3A2A1A;
+    --p1: #86EFAC; --p1-bg: #1C3326;
+    --p2: #5EEAD4; --p2-bg: #16332F;
+    --p3: #C4B5FD; --p3-bg: #2D2547;
+    --p4: #F9A8D4; --p4-bg: #42223A;
+    --p5: #FCA5A5; --p5-bg: #43222A;
+    --on-p: #17171C;
     --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     --backdrop: rgba(0, 0, 0, 0.6);
   }

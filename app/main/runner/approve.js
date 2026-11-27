@@ -10,10 +10,10 @@ const MCP_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'appr
 /**
  * 승인 다리: claude 의 MCP 서버가 로컬 HTTP 로 물어 오면 askUser 로 전달한다
  * @param {{askUser: (q: {toolName: string, input: unknown, toolUseId?: string}) => Promise<'allow'|'deny'>,
- *   timeoutMs?: number}} opts
+ *   timeoutMs?: number, readRepos?: string[]}} opts
  * @returns {Promise<{port: number, mcpConfigPath: string, close: () => Promise<void>}>}
  */
-export async function startApprovalBridge({ askUser, timeoutMs = 600000 }) {
+export async function startApprovalBridge({ askUser, timeoutMs = 600000, readRepos = [] }) {
   const secret = randomBytes(32).toString('hex');
 
   async function decide(q) {
@@ -59,7 +59,10 @@ export async function startApprovalBridge({ askUser, timeoutMs = 600000 }) {
       rooms: {
         command: process.execPath,
         args: [MCP_SCRIPT],
-        env: { ELECTRON_RUN_AS_NODE: '1', ROOMS_APPROVE_PORT: String(port), ROOMS_APPROVE_SECRET: secret },
+        env: {
+          ELECTRON_RUN_AS_NODE: '1', ROOMS_APPROVE_PORT: String(port), ROOMS_APPROVE_SECRET: secret,
+          ROOMS_READ_REPOS: JSON.stringify(readRepos), // git_read 가 읽을 수 있는 저장소
+        },
       },
     },
   }), { mode: 0o600 });

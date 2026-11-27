@@ -16,6 +16,12 @@ const ERROR_TEXT = {
   DEST_EXISTS: '같은 이름의 폴더가 이미 있어요',
   CLAUDE_NOT_FOUND: '이 컴퓨터에서 claude 를 찾지 못했어요',
   CLAUDE_LOGIN_FAILED: 'Claude 로그인에 실패했어요',
+  NOT_CANCELLABLE: '이미 끝났거나 중단할 수 없는 요청이에요',
+  UPDATE_BUSY: 'Claude 가 실행 중이에요. 끝난 뒤 다시 눌러 주세요',
+  UPDATE_LOCAL_CHANGES: '앱 소스 폴더에 커밋 안 된 변경이 있어 멈췄어요',
+  UPDATE_NOT_GIT: '앱 소스 폴더가 git 클론이 아니라 업데이트할 수 없어요',
+  UPDATE_PULL_FAILED: '새 버전을 받지 못했어요',
+  UPDATE_INSTALL_FAILED: '패키지 설치에 실패했어요',
 };
 
 /** 화면 동작 실패 코드 → 문구 */
@@ -36,6 +42,11 @@ const FAIL_TEXT = {
   'PREFLIGHT:MISSING': '레포 폴더가 연결되지 않았어요',
   'PREFLIGHT:REMOTE_MISMATCH': '레포 주소가 방 설정과 달라요',
   'PREFLIGHT:BRANCH_MISMATCH': '레포 브랜치가 방 설정과 달라요',
+  BRANCH_NOT_ON_REMOTE: '방 브랜치가 원격에 없어요',
+  SYNC_CONFLICT: '방 작업 폴더를 최신으로 맞추다 충돌이 났어요',
+  FETCH_FAILED: '원격에서 받아오지 못했어요',
+  BAD_BRANCH: '브랜치 이름이 올바르지 않아요',
+  WORKTREE_FAILED: '방 작업 폴더를 만들지 못했어요',
   TRANSCRIPT_MISSING: '대화 기록을 불러오지 못했어요',
   TRANSCRIPT_NOT_FOUND: '대화 기록을 불러오지 못했어요',
   BAD_SESSION_ID: '대화 기록을 불러오지 못했어요',
@@ -49,7 +60,7 @@ export function failText(code) {
   return `실행에 실패했어요(${code ?? '알 수 없음'})`;
 }
 
-export const STATUS_TEXT = { queued: '대기 중', running: '실행 중', done: '완료', failed: '실패', held: '보류' };
+export const STATUS_TEXT = { queued: '대기 중', running: '실행 중', done: '완료', failed: '실패', held: '보류', cancelled: '중단됨' };
 
 const pad = (n) => String(n).padStart(2, '0');
 export const formatDate = (ms) => {
@@ -60,6 +71,49 @@ export const formatTime = (ms) => {
   const d = new Date(ms);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
+
+/** 사람별 고정 색 번호(0~5). 사용자 id 로 정한다 */
+export const personIndex = (userId) => Math.abs(Number(userId) || 0) % 6;
+
+/** 이름의 첫 글자(아바타용) */
+export const initial = (name) => [...String(name ?? '').trim()][0]?.toUpperCase() ?? '?';
+
+const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
+
+/**
+ * 사용량 한 줄: "5시간 21% · 15:00 초기화" / "주간 57% · 금 14:00 초기화"
+ * @param {'fiveHour'|'sevenDay'} kind
+ * @param {{utilization: number, resetsAt: number}} w resetsAt 은 ms
+ */
+export function usageLabel(kind, w, now = Date.now()) {
+  const pct = `${Math.round(w.utilization * 100)}%`;
+  const name = kind === 'fiveHour' ? '5시간' : '주간';
+  if (w.resetsAt <= now) return `${name} ${pct} · 초기화 시각이 지났어요`;
+  const d = new Date(w.resetsAt);
+  return `${name} ${pct} · ${kind === 'sevenDay' ? `${DAYS[d.getDay()]} ` : ''}${formatTime(w.resetsAt)} 초기화`;
+}
+
+/** 80% 이상이면 경고 */
+export const usageWarn = (w) => w.utilization >= 0.8;
+
+/** 마지막 확인 시각: 오늘이면 시각만, 아니면 날짜도 */
+export function usageChecked(ms, now = Date.now()) {
+  const same = new Date(ms).toDateString() === new Date(now).toDateString();
+  return `마지막 확인 ${same ? '' : `${formatDate(ms).slice(5)} `}${formatTime(ms)}`;
+}
+
+/** 멤버 연결 요약: "연결한 레포: a, b · 함께 읽는 폴더: x · Claude 로그인 ○" */
+export function memberSummary(st) {
+  if (!st) return '아직 연결 정보가 없어요';
+  const list = (a) => (a?.length ? a.join(', ') : '없음');
+  return `연결한 레포: ${list(st.repos)} · 함께 읽는 폴더: ${list(st.readDirs)} · Claude 로그인 ${st.claude ? '○' : '×'}`;
+}
+
+const MODEL_LABEL = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' };
+const EFFORT_LABEL = { low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
+/** 모델·노력 단계 표시 이름. 빈 값은 빈 글자 */
+export const modelLabel = (v) => (v ? MODEL_LABEL[v] ?? v : '');
+export const effortLabel = (v) => (v ? EFFORT_LABEL[v] ?? v : '');
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

@@ -5,7 +5,7 @@ const CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const toRoom = (r) => r && ({
   id: r.id, name: r.name, inviteCode: r.invite_code, ownerId: r.owner_id,
   claudeSessionId: r.claude_session_id, transcriptVersion: r.transcript_version,
-  createdAt: r.created_at,
+  createdAt: r.created_at, defaultModel: r.default_model ?? '', defaultEffort: r.default_effort ?? '',
 });
 const toRepo = (r) => r && ({ id: r.id, name: r.name, remoteUrl: r.remote_url, branch: r.branch });
 
@@ -90,6 +90,23 @@ export function leaveRoom(db, userId, roomId) {
 export function renameRoom(db, userId, roomId, { name }) {
   ownedRoom(db, userId, roomId);
   db.prepare('UPDATE rooms SET name = ? WHERE id = ?').run(text(name), roomId);
+  return toRoom(roomRow(db, roomId));
+}
+
+const MODEL = /^(|opus|sonnet|haiku|fable|claude-[a-z0-9.-]+)$/;
+const EFFORT = /^(|low|medium|high|xhigh|max)$/;
+
+/** 방 기본 모델·노력 단계(방장만). 주지 않은 값은 그대로 둔다 */
+export function setRoomSettings(db, userId, roomId, { defaultModel, defaultEffort }) {
+  const r = ownedRoom(db, userId, roomId);
+  const pick = (v, re, old) => {
+    if (v === undefined) return old ?? '';
+    if (typeof v !== 'string' || !re.test(v)) throw new Error('INVALID_INPUT');
+    return v;
+  };
+  const model = pick(defaultModel, MODEL, r.default_model);
+  const effort = pick(defaultEffort, EFFORT, r.default_effort);
+  db.prepare('UPDATE rooms SET default_model = ?, default_effort = ? WHERE id = ?').run(model, effort, roomId);
   return toRoom(roomRow(db, roomId));
 }
 

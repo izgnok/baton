@@ -6,11 +6,16 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MSG } from '@rooms/shared/protocol.js';
 import { fixPath } from './env.js';
-import { loadConfig, saveConfig, setRepoPath } from './localConfig.js';
-import { createServerClient, login, signup } from './serverClient.js';
+import { loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel, roomsHome } from './localConfig.js';
+import { mergeUsage } from './usage.js';
+import { createUpdater } from './updater.js';
+import { scanRepos, matchRepo, detectReadDirs } from './repoIndex.js';
+import { listSkills } from './skills.js';
+import { createServerClient, login, signup, getServerCommit } from './serverClient.js';
 import { claudeAuthStatus, claudeLogin } from './claudeAuth.js';
-import { cloneRepo as gitClone, preflight } from './runner/preflight.js';
+import { cloneRepo as gitClone, inspectRepo, preflight } from './runner/preflight.js';
 import { runTurn } from './runner/turn.js';
+import { worktreePath, isProtectedBranch, removeWorktree, listRepoFiles } from './runner/worktree.js';
 import { startCapture } from './capture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +23,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 let config;
 let client = null;
 let win = null;
+let updater = null;
 const roomCache = new Map(); // roomId → 방 상태
 const pending = new Map(); // 승인 id → {resolve, requestId}
 const runs = new Map(); // requestId → AbortController
@@ -51,18 +57,18 @@ function closeApproval(requestId) {
 
 async function handleRunStart(runStart) {
   const { requestId, roomId } = runStart;
-  let state = roomCache.get(roomId);
-  if (!state) {
-    try {
-      state = (await req(MSG.ROOM_OPEN, { roomId })).state;
-      roomCache.set(roomId, state);
-    } catch (e) {
-      return void client?.request(MSG.RUN_FAIL, { requestId, reason: e.message }).catch(() => {});
-    }
-  }
-  const ac = new AbortController();
+  const ac = new AbortController(); // 방을 여는 동안 중단 신호가 와도 놓치지 않게 먼저 만든다
   runs.set(requestId, ac);
   try {
+    let state = roomCache.get(roomId);
+    if (!state) {
+      try {
+        state = (await req(MSG.ROOM_OPEN, { roomId })).state;
+        roomCache.set(roomId, state);
+      } catch (e) {
+        return void client?.request(MSG.RUN_FAIL, { requestId, reason: e.message }).catch(() => {});
+      }
+    }
     await runTurn({
       runStart,
       roomState: state,
@@ -71,6 +77,16 @@ async function handleRunStart(runStart) {
       http: client.http,
       askUser: (q) => askUser(q, { requestId, roomId }),
       closeApproval,
+      readDirs: config.rooms[roomId]?.readDirs ?? [],
+      repoIndex: config.repoIndex?.repos ?? [],
+      ...effectiveModel(config, roomId, state.room), // 개인 선택 → 방 기본 → 내 Claude 설정
+      onRateLimit: (ev) => {
+        const usage = mergeUsage(config.usage, ev, Date.now());
+        if (!usage) return;
+        config = { ...config, usage };
+        saveConfig(config);
+        toRenderer('usage', usage);
+      },
       signal: ac.signal,
     });
   } finally {
@@ -84,13 +100,73 @@ function connectClient() {
   if (!config.serverUrl || !config.token) return;
   const c = createServerClient({ serverUrl: config.serverUrl, token: config.token });
   client = c;
-  c.on('status', (s) => toRenderer('conn:status', s));
+  c.on('status', (s) => {
+    toRenderer('conn:status', s);
+    if (s.connected) getServerCommit(config.serverUrl).then((commit) => updater?.setServerCommit(commit)).catch(() => {});
+  });
   c.on('*', (m) => {
-    if (m.type === MSG.ROOM_STATE) roomCache.set(m.state.room.id, m.state);
-    else if (m.type === MSG.ROOM_DELETE) roomCache.delete(m.roomId);
+    if (m.type === MSG.ROOM_STATE) {
+      const roomId = m.state.room.id;
+      const names = (s) => JSON.stringify(s?.repos.map((r) => [r.id, r.name]));
+      const renamed = names(roomCache.get(roomId)) !== names(m.state);
+      roomCache.set(roomId, m.state);
+      const linked = autoLink(roomId, m.state);
+      if (linked) toRenderer('rooms:event', { type: 'local.repos', roomId });
+      if (linked || renamed) sendMemberStatus(roomId);
+    } else if (m.type === MSG.ROOM_DELETE) roomCache.delete(m.roomId);
     if (m.type === MSG.RUN_START) return void handleRunStart(m.runStart);
+    if (m.type === MSG.RUN_CANCEL) return void runs.get(Number(m.requestId))?.abort();
     toRenderer('rooms:event', m);
   });
+}
+
+// 레포를 연결하고, 그 위쪽의 CLAUDE.md·.claude 폴더를 함께 읽는 폴더에 넣는다
+function linkLocal(roomId, repoId, localPath) {
+  config = addReadDirs(setRepoPath(config, roomId, repoId, localPath), roomId, detectReadDirs(localPath, os.homedir()));
+  saveConfig(config);
+}
+
+// 연결 안 된 방 레포 중 내 PC 레포 목록에 같은 원격 주소가 있는 것을 자동 연결한다. 바뀌었으면 true
+function autoLink(roomId, state) {
+  let changed = false;
+  for (const repo of state.repos) {
+    if (config.rooms[roomId]?.repos?.[repo.id]) continue;
+    const found = matchRepo(config.repoIndex, repo.remoteUrl);
+    if (!found) continue;
+    linkLocal(roomId, repo.id, found);
+    changed = true;
+  }
+  return changed;
+}
+
+let claudeCache = { at: 0, ok: false };
+async function claudeLoggedIn() {
+  if (Date.now() - claudeCache.at > 60000) claudeCache = { at: Date.now(), ok: !!(await claudeAuthStatus().catch(() => null))?.loggedIn };
+  return claudeCache.ok;
+}
+
+// 내 연결 요약(레포 이름·함께 읽는 폴더 마지막 이름·Claude 로그인)을 서버에 알린다. 전체 경로는 보내지 않는다
+async function sendMemberStatus(roomId) {
+  const state = roomCache.get(roomId);
+  if (!state || !client) return;
+  const room = config.rooms[roomId] ?? {};
+  const status = {
+    repos: state.repos.filter((r) => room.repos?.[r.id]).map((r) => r.name),
+    readDirs: (room.readDirs ?? []).map((d) => path.basename(d)),
+    claude: await claudeLoggedIn(),
+  };
+  client.request(MSG.MEMBER_STATUS, { roomId, status }).catch(() => {});
+}
+
+async function rescan() {
+  const repos = await scanRepos({});
+  config = { ...config, repoIndex: { scannedAt: Date.now(), repos } };
+  saveConfig(config);
+  for (const [roomId, state] of roomCache) {
+    if (autoLink(roomId, state)) toRenderer('rooms:event', { type: 'local.repos', roomId });
+    sendMemberStatus(roomId);
+  }
+  return config.repoIndex;
 }
 
 async function checkRepos({ roomId }) {
@@ -99,13 +175,59 @@ async function checkRepos({ roomId }) {
     state = (await req(MSG.ROOM_OPEN, { roomId })).state;
     roomCache.set(roomId, state);
   }
-  return preflight(state.repos, config.rooms[roomId]?.repos ?? {});
+  const res = await preflight(state.repos, config.rooms[roomId]?.repos ?? {});
+  const indexed = new Set((config.repoIndex?.repos ?? []).map((r) => r.path));
+  res.results = res.results.map((r) => {
+    const repo = state.repos.find((x) => x.id === r.repoId);
+    const wt = worktreePath(roomId, repo);
+    // indexed: 내 PC 레포 목록에 있는 경로(자동 연결 대상)
+    return { ...r, worktreePath: wt, worktreeExists: fs.existsSync(wt), protected: isProtectedBranch(repo.branch), indexed: !!r.localPath && indexed.has(r.localPath) };
+  });
+  res.indexedAt = config.repoIndex?.scannedAt ?? null;
+  return res;
+}
+
+const stateOf = async (roomId) => roomCache.get(roomId) ?? (await req(MSG.ROOM_OPEN, { roomId })).state;
+
+// 방 레포들의 작업 폴더를 지운다. 안 올린 변경이 있어 남긴 것만 목록으로 돌려준다
+async function cleanWorktrees(roomId, repos) {
+  const kept = [];
+  for (const repo of repos) {
+    const wt = worktreePath(roomId, repo);
+    const sourcePath = config.rooms[roomId]?.repos?.[repo.id];
+    try {
+      if (!sourcePath && fs.existsSync(wt)) throw new Error('NO_SOURCE');
+      const r = await removeWorktree({ sourcePath, worktreePath: wt, branch: repo.branch });
+      if (!r.removed) kept.push({ repoId: repo.id, name: repo.name, path: wt, reason: r.reason });
+    } catch (e) {
+      kept.push({ repoId: repo.id, name: repo.name, path: wt, reason: e.message === 'NO_SOURCE' ? e.message : 'FAILED' });
+    }
+  }
+  return kept;
+}
+
+// 폴더 열기는 방 작업 폴더나 내가 연결한 원본 폴더만 허용한다
+function openableDir(p) {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) return false;
+  const target = path.resolve(p);
+  const inside = (base) => { const rel = path.relative(path.resolve(base), target); return !rel.startsWith('..') && !path.isAbsolute(rel); };
+  const linked = Object.values(config.rooms).flatMap((r) => Object.values(r.repos ?? {})).map((x) => path.resolve(x));
+  if (!inside(roomsHome()) && !linked.includes(target)) return false;
+  try { return fs.statSync(target).isDirectory(); } catch { return false; }
 }
 
 async function linkRepo({ roomId, repoId, localPath }) {
-  config = setRepoPath(config, roomId, repoId, localPath);
-  saveConfig(config);
+  linkLocal(roomId, repoId, localPath);
+  sendMemberStatus(roomId);
   return checkRepos({ roomId });
+}
+
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+// 방 작업 폴더가 있으면 그 폴더, 없으면 빈 목록(프로젝트 스킬은 작업 폴더 기준)
+function roomWorkDirs(roomId) {
+  const state = roomCache.get(roomId);
+  return (state?.repos ?? []).map((r) => worktreePath(roomId, r)).filter(isDir);
 }
 
 async function authenticate(fn, { serverUrl, ...body }) {
@@ -129,24 +251,56 @@ const handlers = {
     roomCache.clear();
   },
   claudeStatus: () => claudeAuthStatus(),
-  claudeLogin: () => claudeLogin(),
+  claudeLogin: async () => {
+    await claudeLogin();
+    claudeCache.at = 0;
+    for (const roomId of roomCache.keys()) sendMemberStatus(roomId);
+  },
   listRooms: () => req(MSG.ROOM_LIST),
   createRoom: (a) => req(MSG.ROOM_CREATE, a),
   joinRoom: (a) => req(MSG.ROOM_JOIN, a),
-  leaveRoom: (a) => req(MSG.ROOM_LEAVE, a),
+  leaveRoom: async (a) => {
+    const repos = (await stateOf(a.roomId).catch(() => null))?.repos ?? [];
+    await req(MSG.ROOM_LEAVE, a);
+    return { keptWorktrees: await cleanWorktrees(a.roomId, repos) };
+  },
   openRoom: async (a) => {
     const data = await req(MSG.ROOM_OPEN, a);
     roomCache.set(a.roomId, data.state);
-    return data;
+    autoLink(a.roomId, data.state);
+    sendMemberStatus(a.roomId);
+    const mine = config.rooms[a.roomId] ?? {};
+    return { ...data, myModel: { model: mine.model ?? '', effort: mine.effort ?? '' } };
   },
+  setRoomModel: ({ roomId, model, effort }) => {
+    config = setRoomModel(config, roomId, model, effort);
+    saveConfig(config);
+  },
+  setRoomSettings: (a) => req(MSG.ROOM_SETTINGS, a),
+  getUsage: () => config.usage ?? null,
+  checkUpdate: () => updater.check(),
+  applyUpdate: () => updater.apply(),
   renameRoom: (a) => req(MSG.ROOM_RENAME, a),
   regenerateInvite: (a) => req(MSG.INVITE_REGENERATE, a),
-  deleteRoom: (a) => req(MSG.ROOM_DELETE, a),
+  deleteRoom: async (a) => {
+    const repos = (await stateOf(a.roomId).catch(() => null))?.repos ?? [];
+    await req(MSG.ROOM_DELETE, a);
+    return { keptWorktrees: await cleanWorktrees(a.roomId, repos) };
+  },
   sendMessage: (a) => req(MSG.CHAT_SEND, a),
   retry: (a) => req(MSG.REQUEST_RETRY, a),
+  cancelRequest: (a) => req(MSG.REQUEST_CANCEL, a),
   addRepo: (a) => req(MSG.REPO_ADD, a),
   updateRepo: (a) => req(MSG.REPO_UPDATE, a),
-  removeRepo: (a) => req(MSG.REPO_REMOVE, a),
+  removeRepo: async (a) => {
+    // 서버에서 지워지면(방장만 가능) 그 레포의 내 작업 폴더도 정리한다
+    const hit = [...roomCache.entries()].find(([, s]) => s.repos.some((r) => r.id === a.repoId));
+    await req(MSG.REPO_REMOVE, a);
+    if (!hit) return {};
+    const [roomId, state] = hit;
+    const [kept] = await cleanWorktrees(roomId, state.repos.filter((r) => r.id === a.repoId));
+    return kept ? { keptWorktree: kept.path, reason: kept.reason } : {};
+  },
   checkRepos,
   linkRepo,
   cloneRepo: async ({ roomId, repoId }) => {
@@ -155,6 +309,29 @@ const handlers = {
     if (!repo) throw new Error('NOT_FOUND');
     const localPath = await gitClone({ remoteUrl: repo.remoteUrl, branch: repo.branch, name: repo.name });
     return linkRepo({ roomId, repoId, localPath });
+  },
+  inspectRepo: ({ localPath }) => inspectRepo(localPath),
+  rescanRepos: () => rescan(),
+  listReadDirs: ({ roomId }) => config.rooms[roomId]?.readDirs ?? [],
+  addReadDir: ({ roomId, path: p }) => {
+    if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('INVALID_INPUT');
+    if (!isDir(p)) throw new Error('NOT_FOUND');
+    config = addReadDirs(config, roomId, [path.resolve(p)]);
+    saveConfig(config);
+    sendMemberStatus(roomId);
+    return config.rooms[roomId].readDirs;
+  },
+  removeReadDir: ({ roomId, path: p }) => {
+    config = removeReadDir(config, roomId, p);
+    saveConfig(config);
+    sendMemberStatus(roomId);
+    return config.rooms[roomId]?.readDirs ?? [];
+  },
+  listSkills: ({ roomId } = {}) => listSkills({ workDirs: roomId != null ? roomWorkDirs(roomId) : [] }),
+  listRepoFiles: async ({ roomId, query }) => listRepoFiles({ roomId, repos: (await stateOf(roomId)).repos, query }),
+  openFolder: async ({ path: p }) => {
+    if (!openableDir(p)) throw new Error('FORBIDDEN');
+    if (await shell.openPath(path.resolve(p))) throw new Error('NOT_FOUND');
   },
   pickFolder: async () => {
     const r = await dialog.showOpenDialog(win ?? undefined, { properties: ['openDirectory'] });
@@ -223,7 +400,7 @@ async function smoke() {
       try {
         const tools = (await mcp.listTools()).tools.map((t) => t.name);
         const call = JSON.parse((await mcp.callTool({ name: 'approve', arguments: { tool_name: 'Bash', input: { a: 1 } } })).content[0].text);
-        return { hasApprove: tools.includes('approve'), allowWorks: call.behavior === 'allow' };
+        return { hasApprove: tools.includes('approve'), hasGitRead: tools.includes('git_read'), allowWorks: call.behavior === 'allow' };
       } finally { await mcp.close(); }
     });
   } finally {
@@ -235,7 +412,7 @@ async function smoke() {
   out.electron = process.versions.electron ?? null;
   // claude 로그인 안 돼 있어도 점검 자체는 성공으로 본다(로그인 여부는 값으로 보고)
   const required = ['server', 'signup', 'connect', 'roomCreate', 'approveMcp'];
-  const ok = required.every((k) => out[k]?.ok) && out.approveMcp?.hasApprove && out.approveMcp?.allowWorks;
+  const ok = required.every((k) => out[k]?.ok) && out.approveMcp?.hasApprove && out.approveMcp?.hasGitRead && out.approveMcp?.allowWorks;
   out.ok = !!ok;
   return out;
 }
@@ -288,8 +465,17 @@ async function main() {
     return out;
   };
   for (const [name, fn] of Object.entries(handlers)) ipcMain.handle(name, (_e, args = {}) => fn(ids(args)));
+  // 캡처 중에는 실제 소스 폴더를 건드리지 않게 git 이 아닌 임시 폴더를 가리킨다
+  updater = createUpdater({
+    root: cap ? process.env.ROOMS_HOME : path.resolve(here, '..', '..'),
+    isBusy: () => runs.size > 0,
+    relaunch: () => { app.relaunch(); app.exit(0); },
+    notify: (s) => toRenderer('update', s),
+  });
+  if (!cap) updater.start();
   connectClient();
   createWindow();
+  if (!cap) rescan().catch((e) => console.error('레포 찾기 실패', e)); // 저장된 목록을 먼저 쓰고 백그라운드에서 다시 찾는다
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   if (cap) {
     const timer = setTimeout(() => { console.error('CAPTURE_TIMEOUT'); app.exit(1); }, 120000);

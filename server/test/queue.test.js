@@ -14,11 +14,12 @@ function setup(n = 3) {
   }
   const room = createRoom(db, users[0], { name: '방' });
   for (const u of users.slice(1)) joinRoom(db, u, { inviteCode: room.inviteCode });
-  const env = { t: 1000, online: new Set(users), dispatches: [], broadcasts: [] };
+  const env = { t: 1000, online: new Set(users), dispatches: [], cancels: [], broadcasts: [] };
   const q = createQueue(db, {
     now: () => env.t,
     isOnline: (u) => env.online.has(u),
     dispatch: (userId, runStart) => env.dispatches.push({ userId, runStart }),
+    dispatchCancel: (userId, requestId) => env.cancels.push({ userId, requestId }),
     broadcast: (roomId, payload) => env.broadcasts.push({ roomId, payload }),
   });
   const status = (id) => {
@@ -35,6 +36,10 @@ test('postMessage 판정', () => {
   assert.equal(m.body, '안녕');
   assert.equal(m.userName, 'u0');
   assert.throws(() => q.postMessage(a, room.id, '@claude   '), { message: 'EMPTY_REQUEST' });
+  assert.throws(() => q.postMessage(a, room.id, ' / '), { message: 'EMPTY_REQUEST' });
+  const slash = q.postMessage(a, room.id, '  /compact');
+  assert.equal(slash.kind, 'claude_request');
+  assert.equal(slash.body, '/compact');
   const chat = q.postMessage(a, room.id, ' 이메일 a@claude.com ');
   assert.equal(chat.kind, 'chat');
   assert.equal(chat.body, ' 이메일 a@claude.com ');
@@ -235,4 +240,56 @@ test('listMessages 는 마지막 limit 개를 id 오름차순으로', () => {
   const { users: [a], room, q } = setup();
   for (let i = 0; i < 5; i++) q.postMessage(a, room.id, `m${i}`);
   assert.deepEqual(q.listMessages(a, room.id, { limit: 3 }).map((m) => m.body), ['m2', 'm3', 'm4']);
+});
+
+test('cancel: 대기·보류 요청은 바로 cancelled, dispatchCancel 은 부르지 않는다', () => {
+  const { users: [a, b, c], room, env, q, status } = setup();
+  env.online.delete(c);
+  const held = q.postMessage(c, room.id, '@claude 보류');
+  q.postMessage(a, room.id, '@claude 하나');
+  const waiting = q.postMessage(b, room.id, '@claude 대기');
+  q.cancel(b, waiting.id);
+  assert.deepEqual(status(waiting.id), ['cancelled', null]);
+  q.cancel(c, held.id);
+  assert.deepEqual(status(held.id), ['cancelled', null]);
+  assert.deepEqual(env.cancels, []);
+  assert.ok(env.broadcasts.some((x) => x.payload.type === MSG.MESSAGE_UPDATE && x.payload.message.status === 'cancelled'));
+});
+
+test('cancel: 실행 중이면 cancelled + dispatchCancel(요청자) + 다음 요청 dispatch, 늦은 finish 는 거부', () => {
+  const { users: [a, b], room, env, q, status } = setup();
+  const r1 = q.postMessage(a, room.id, '@claude 하나');
+  const r2 = q.postMessage(b, room.id, '@claude 둘');
+  q.cancel(a, r1.id);
+  assert.deepEqual(status(r1.id), ['cancelled', null]);
+  assert.deepEqual(env.cancels, [{ userId: a, requestId: r1.id }]);
+  assert.deepEqual(env.dispatches.map((d) => d.userId), [a, b]);
+  assert.deepEqual(status(r2.id), ['running', null]);
+  assert.throws(() => q.finish(r1.id, { transcriptVersion: 0 }), { message: 'NOT_RUNNING' });
+  assert.deepEqual(status(r1.id), ['cancelled', null]);
+});
+
+test('cancel: 남·비방장은 FORBIDDEN, 방장은 남의 요청도 취소, 비멤버는 FORBIDDEN', () => {
+  const { db, users: [owner, b, c], room, q, status } = setup();
+  q.postMessage(owner, room.id, '@claude 하나');
+  const r2 = q.postMessage(b, room.id, '@claude 둘');
+  assert.throws(() => q.cancel(c, r2.id), { message: 'FORBIDDEN' });
+  q.cancel(owner, r2.id); // 방장
+  assert.deepEqual(status(r2.id), ['cancelled', null]);
+  const outsider = signup(db, { email: 'o@x.com', password: 'password1', name: 'o' }).user.id;
+  const r3 = q.postMessage(b, room.id, '@claude 셋');
+  assert.throws(() => q.cancel(outsider, r3.id), { message: 'FORBIDDEN' });
+  assert.throws(() => q.cancel(owner, 9999), { message: 'NOT_FOUND' });
+});
+
+test('cancel: 끝난 요청은 NOT_CANCELLABLE, cancelled 는 retry 로 다시 대기열에', () => {
+  const { users: [a], room, q, status } = setup();
+  const r1 = q.postMessage(a, room.id, '@claude 하나');
+  q.finish(r1.id, { transcriptVersion: 0 });
+  assert.throws(() => q.cancel(a, r1.id), { message: 'NOT_CANCELLABLE' });
+  const r2 = q.postMessage(a, room.id, '@claude 둘');
+  q.cancel(a, r2.id);
+  assert.throws(() => q.cancel(a, r2.id), { message: 'NOT_CANCELLABLE' });
+  q.retry(a, r2.id);
+  assert.deepEqual(status(r2.id), ['running', null]);
 });

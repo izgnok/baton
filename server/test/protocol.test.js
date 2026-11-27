@@ -10,6 +10,10 @@ test('parseClaudeMention', () => {
     ['이메일 a@claude.com', { isClaude: false, body: '이메일 a@claude.com' }],
     ['@claudex 안녕', { isClaude: false, body: '@claudex 안녕' }],
     ['안녕 @claude', { isClaude: false, body: '안녕 @claude' }],
+    ['/compact', { isClaude: true, body: '/compact' }],
+    ['  /my-skill 인자 하나', { isClaude: true, body: '/my-skill 인자 하나' }],
+    ['/', { isClaude: true, body: '' }],
+    ['안녕 /compact', { isClaude: false, body: '안녕 /compact' }],
   ];
   for (const [text, want] of cases) assert.deepEqual(parseClaudeMention(text), want, text);
 });

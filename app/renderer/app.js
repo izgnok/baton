@@ -4,7 +4,8 @@ import { loginView } from './views/login.js';
 import { roomListView } from './views/roomList.js';
 import { roomView } from './views/room.js';
 import { openApprovalSheet } from './views/approval.js';
-import { closeTransientSheets } from './views/sheet.js';
+import { closeTransientSheets, openSheet } from './views/sheet.js';
+import { errorText } from './format.js';
 
 const root = document.getElementById('app');
 const banner = document.getElementById('banner');
@@ -16,6 +17,7 @@ const roomNames = new Map();
 
 const ctx = {
   user: null,
+  usage: null, // 마지막으로 받은 5시간·주간 사용량(이 PC 에만 있다)
   claude: null, // 마지막으로 읽은 claude auth status
   go,
   toast(text) {
@@ -49,6 +51,30 @@ window.__debug = { go };
 
 // 서버 알림
 window.rooms.onEvent((m) => current?.onEvent?.(m));
+window.rooms.onUsage((u) => { ctx.usage = u; current?.onUsage?.(u); });
+
+// 업데이트 띠: 새 커밋이 있으면 [자세히] [업데이트], 서버 버전이 다르면 안내
+const updateBar = document.getElementById('update-bar');
+const serverBar = document.getElementById('server-bar');
+function showUpdate(u) {
+  serverBar.hidden = !u?.serverMismatch;
+  updateBar.hidden = !(u?.count > 0);
+  if (updateBar.hidden) return;
+  const apply = h('button', { type: 'button', class: 'btn-tiny accent' }, '업데이트');
+  apply.addEventListener('click', async () => {
+    apply.disabled = true;
+    apply.textContent = '업데이트 중…';
+    try { await window.rooms.applyUpdate(); } catch (e) { ctx.toast(errorText(e.message)); apply.disabled = false; apply.textContent = '업데이트'; }
+  });
+  const more = h('button', { type: 'button', class: 'btn-tiny' }, '자세히');
+  more.addEventListener('click', () => openSheet({
+    title: '바뀐 내용', subtitle: `커밋 ${u.count}개`,
+    body: h('ul', { class: 'update-list' }, u.subjects.map((t) => h('li', {}, t)), u.count > u.subjects.length ? h('li', { class: 'sub' }, `… 외 ${u.count - u.subjects.length}개`) : null),
+    actions: [{ label: '닫기', kind: 'secondary' }],
+  }));
+  updateBar.replaceChildren(h('span', {}, `새 버전이 있어요 (커밋 ${u.count}개)`), more, apply);
+}
+window.rooms.onUpdate(showUpdate);
 
 let wasDown = false;
 window.rooms.onStatus(async (s) => {
@@ -93,6 +119,8 @@ window.rooms.onApprovalClose(({ requestId }) => {
 });
 
 // 시작
+window.rooms.getUsage().then((u) => { ctx.usage = u; current?.onUsage?.(u); }).catch(() => {});
+window.rooms.checkUpdate().then(showUpdate).catch(() => {});
 const cfg = await window.rooms.getConfig();
 ctx.user = cfg.user;
 if (cfg.loggedIn) await go('rooms');

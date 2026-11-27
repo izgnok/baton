@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { checkRepo, cloneRepo, preflight, safeDirName } from '../main/runner/preflight.js';
+import { checkRepo, cloneRepo, inspectRepo, preflight, safeDirName } from '../main/runner/preflight.js';
 
 const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, stdio: 'pipe' }).toString();
 
@@ -34,10 +34,10 @@ function fixture(name) {
   return { bare, seed, local };
 }
 
-test('정상이면 ok, warn 없음', async () => {
+test('정상이면 ok', async () => {
   const f = fixture('ok');
   const r = await checkRepo({ localPath: f.local, remoteUrl: f.bare, branch: 'main' });
-  assert.deepEqual(r, { ok: true, warn: [], currentBranch: 'main' });
+  assert.deepEqual(r, { ok: true, currentBranch: 'main' });
 });
 
 test('폴더 없음, git 아닌 폴더는 MISSING', async () => {
@@ -55,30 +55,16 @@ test('origin 이 다르면 REMOTE_MISMATCH', async () => {
   assert.equal(r.block, 'REMOTE_MISMATCH');
 });
 
-test('다른 브랜치면 BRANCH_MISMATCH 와 currentBranch', async () => {
-  const f = fixture('bm');
+test('브랜치가 달라도, 커밋 안 된 변경이 있어도, 원격이 앞서 있어도 막지 않는다(작업 폴더가 맡는다)', async () => {
+  const f = fixture('free');
   g(f.local, 'checkout', '-q', 'develop');
-  const r = await checkRepo({ localPath: f.local, remoteUrl: f.bare, branch: 'main' });
-  assert.deepEqual([r.block, r.currentBranch, r.warn], ['BRANCH_MISMATCH', 'develop', []]);
-});
-
-test('수정·추적 안 되는 파일은 DIRTY', async () => {
-  const f = fixture('dirty');
   fs.writeFileSync(path.join(f.local, 'a.txt'), 'changed');
-  assert.deepEqual((await checkRepo({ localPath: f.local, remoteUrl: f.bare, branch: 'main' })).warn, ['DIRTY']);
-  g(f.local, 'checkout', '-q', '--', 'a.txt');
-  fs.writeFileSync(path.join(f.local, 'new.txt'), 'n');
-  assert.deepEqual((await checkRepo({ localPath: f.local, remoteUrl: f.bare, branch: 'main' })).warn, ['DIRTY']);
-});
-
-test('원격이 앞서 있으면 BEHIND', async () => {
-  const f = fixture('behind');
   fs.writeFileSync(path.join(f.seed, 'b.txt'), 'b');
   g(f.seed, 'add', '.');
   g(f.seed, 'commit', '-q', '-m', 'more');
   g(f.seed, 'push', '-q', 'origin', 'main');
   const r = await checkRepo({ localPath: f.local, remoteUrl: f.bare, branch: 'main' });
-  assert.deepEqual([r.ok, r.warn], [true, ['BEHIND']]);
+  assert.deepEqual(r, { ok: true, currentBranch: 'develop' });
 });
 
 test('cloneRepo 는 지정 브랜치로 체크아웃, 같은 이름은 DEST_EXISTS', async () => {
@@ -97,12 +83,25 @@ test('cloneRepo: - 로 시작하는 주소는 git 옵션으로 실행되지 않�
   assert.equal(fs.existsSync(marker), false);
 });
 
+test('inspectRepo: 하위 폴더를 골라도 최상위 기준 이름·주소·브랜치, git 아니면 NOT_A_REPO', async () => {
+  const f = fixture('inspect');
+  fs.mkdirSync(path.join(f.local, 'sub'));
+  const info = await inspectRepo(path.join(f.local, 'sub'));
+  assert.equal(fs.realpathSync(info.localPath), fs.realpathSync(f.local));
+  assert.equal(info.name, 'inspect-local');
+  assert.equal(info.remoteUrl, f.bare);
+  assert.equal(info.branch, 'main');
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'not-repo-'));
+  await assert.rejects(inspectRepo(plain), { message: 'NOT_A_REPO' });
+  fs.rmSync(plain, { recursive: true, force: true });
+});
+
 test('safeDirName', () => {
   assert.ok(!safeDirName('../evil').includes('..'));
   assert.equal(safeDirName('../evil'), '_evil');
   assert.equal(safeDirName('...'), 'repo');
   assert.equal(safeDirName('a/b c'), 'a_b_c');
-  assert.equal(safeDirName('insight-1.2'), 'insight-1.2');
+  assert.equal(safeDirName('payment-api-1.2'), 'payment-api-1.2');
 });
 
 test('preflight: 하나라도 MISSING 이면 ok false, 결과는 레포 수만큼', async () => {

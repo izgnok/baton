@@ -1,6 +1,7 @@
 import { h, button } from '../dom.js';
 import { errorText, formatDate } from '../format.js';
 import { inputSheet } from './sheet.js';
+import { usageBars } from './usage.js';
 
 export function roomListView(root, ctx) {
   let destroyed = false;
@@ -18,7 +19,8 @@ export function roomListView(root, ctx) {
       claudeBox.append(h('div', { class: 'claude-card' },
         h('div', { class: 'claude-main' },
           ['Claude', c.orgName, c.subscriptionType].filter(Boolean).join(' · '),
-          c.email ? h('div', { class: 'sub' }, c.email) : null)));
+          c.email ? h('div', { class: 'sub' }, c.email) : null,
+          usageBars(ctx.usage))));
       return;
     }
     claudeBox.append(h('div', { class: 'claude-card' },
@@ -110,6 +112,7 @@ export function roomListView(root, ctx) {
     ready,
     onEvent(m) { if (m.type === 'room.state' || m.type === 'room.delete') load(); },
     onReconnect: load,
+    onUsage: renderClaude,
     destroy() { destroyed = true; },
   };
 }

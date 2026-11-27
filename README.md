@@ -21,13 +21,15 @@ node node_modules/electron/install.js
 
 ## 실행
 
-서버(한 대에서만):
+서버(한 대에서만). 관리 프로그램이 서버를 띄우고, 30분마다 `origin/main` 에 새 커밋이 있으면 실행 중인 Claude 요청이 끝난 뒤 받아서 다시 시작하고, 서버가 죽으면 다시 띄운다:
 
 ```bash
-npm start -w server
+npm start -w server        # 관리 프로그램(자동 업데이트·재시작)
+npm run start:raw -w server  # 관리 프로그램 없이 서버만
 ```
 
 시작 로그의 `LAN: http://<IP>:4310` 이 다른 맥에서 접속할 주소다. `PORT`, `DATA_DIR` 환경 변수로 바꿀 수 있다.
+소스 폴더에 커밋 안 된 변경이 있으면 자동 업데이트는 건너뛰고 경고만 낸다. 앱도 같은 방식으로 새 커밋을 알려 주고 화면 위 띠의 [업데이트] 로 받는다.
 
 앱:
 

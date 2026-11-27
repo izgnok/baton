@@ -24,17 +24,23 @@ export const MSG = Object.freeze({
   RUN_FAIL: 'run.fail',
   RUN_APPROVAL: 'run.approval',
   REQUEST_RETRY: 'request.retry',
+  REQUEST_CANCEL: 'request.cancel',
+  RUN_CANCEL: 'run.cancel',
+  MEMBER_STATUS: 'member.status',
+  ROOM_SETTINGS: 'room.settings',
 });
 
 const MENTION = /^\s*@claude(?=\s|$)/i;
 
 /**
- * 맨 앞의 @claude 호출 여부와 그 뒤 본문
+ * Claude 요청 여부와 본문. 맨 앞(앞 공백 허용)이 @claude 면 그 뒤 본문, / 로 시작하면 원문 그대로(명령·스킬)
  * @param {string} text
  * @returns {{isClaude: boolean, body: string}}
  */
 export function parseClaudeMention(text) {
   const m = MENTION.exec(text);
-  if (!m) return { isClaude: false, body: text };
-  return { isClaude: true, body: text.slice(m[0].length).trim() };
+  if (m) return { isClaude: true, body: text.slice(m[0].length).trim() };
+  const t = text.trim();
+  if (t.startsWith('/')) return { isClaude: true, body: t === '/' ? '' : t };
+  return { isClaude: false, body: text };
 }

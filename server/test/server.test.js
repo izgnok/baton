@@ -175,3 +175,110 @@ test('방·채팅·@claude·실행 결과·파일·삭제 전체 흐름', async 
   await A.close();
   await B.close();
 });
+
+test('request.cancel: 실행 중 요청은 요청자 연결에 run.cancel, 다음 요청이 시작된다', async () => {
+  const a = await signup('cancel-a');
+  const b = await signup('cancel-b');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '취소' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+
+  const startA = A.next((m) => m.type === MSG.RUN_START);
+  const r1 = await A.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 하나' });
+  await timeout(startA);
+  const startB = B.next((m) => m.type === MSG.RUN_START);
+  const r2 = await B.ok(MSG.CHAT_SEND, { roomId: room.id, text: '@claude 둘' });
+  assert.equal(r2.status, 'queued');
+
+  // 남의 실행 중 요청: 방장이 아니면 FORBIDDEN
+  assert.equal((await B.req(MSG.REQUEST_CANCEL, { requestId: r1.id })).error, 'FORBIDDEN');
+  const cancelP = A.next((m) => m.type === MSG.RUN_CANCEL);
+  const upd = B.next((m) => m.type === MSG.MESSAGE_UPDATE && m.message.id === r1.id && m.message.status === 'cancelled');
+  await A.ok(MSG.REQUEST_CANCEL, { requestId: r1.id });
+  assert.equal((await timeout(cancelP)).requestId, r1.id);
+  await timeout(upd);
+  assert.equal((await timeout(startB)).runStart.requestId, r2.id);
+  assert.equal(B.pushes.some((m) => m.type === MSG.RUN_CANCEL), false);
+
+  // 중단된 실행의 늦은 finish 는 거부된다
+  const late = await A.req(MSG.RUN_FINISH, { requestId: r1.id, transcriptVersion: 0, transcript: 'x', sharedChanges: [] });
+  assert.equal(late.error, 'NOT_RUNNING');
+  await A.close();
+  await B.close();
+});
+
+test('member.status: 저장·방송·room.open 포함, 크기 제한, 비멤버 거부', async () => {
+  const a = await signup('ms-a');
+  const b = await signup('ms-b');
+  const c = await signup('ms-c');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const C = await login(c.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '상태' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+
+  const pushed = B.next((m) => m.type === MSG.MEMBER_STATUS);
+  const status = { repos: ['payment-api'], readDirs: ['work'], claude: true };
+  await A.ok(MSG.MEMBER_STATUS, { roomId: room.id, status });
+  const m = await timeout(pushed);
+  assert.deepEqual([m.roomId, m.userId, m.status], [room.id, a.user.id, status]);
+
+  const opened = await B.ok(MSG.ROOM_OPEN, { roomId: room.id });
+  assert.deepEqual(opened.memberStatus, { [a.user.id]: status });
+
+  // 20개·100자까지만 저장
+  await B.ok(MSG.MEMBER_STATUS, { roomId: room.id, status: { repos: Array.from({ length: 30 }, () => 'x'.repeat(150)), readDirs: [], claude: false } });
+  const st = (await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).memberStatus[b.user.id];
+  assert.equal(st.repos.length, 20);
+  assert.equal(st.repos[0].length, 100);
+
+  assert.equal((await A.req(MSG.MEMBER_STATUS, { roomId: room.id, status: { repos: 'x', readDirs: [], claude: true } })).error, 'INVALID_INPUT');
+  assert.equal((await C.req(MSG.MEMBER_STATUS, { roomId: room.id, status })).error, 'FORBIDDEN');
+  await A.close();
+  await B.close();
+  await C.close();
+});
+
+test('room.settings: 방장만, 값 검증, 방 상태 방송', async () => {
+  const a = await signup('set-a');
+  const b = await signup('set-b');
+  const A = await login(a.token);
+  const B = await login(b.token);
+  const room = await A.ok(MSG.ROOM_CREATE, { name: '설정' });
+  await B.ok(MSG.ROOM_JOIN, { inviteCode: room.inviteCode });
+  assert.deepEqual([room.defaultModel, room.defaultEffort], ['', '']);
+
+  const pushed = B.next((m) => m.type === MSG.ROOM_STATE && m.state.room.defaultModel === 'opus');
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, defaultModel: 'opus', defaultEffort: 'high' });
+  const st = (await timeout(pushed)).state.room;
+  assert.deepEqual([st.defaultModel, st.defaultEffort], ['opus', 'high']);
+  assert.equal((await B.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.room.defaultEffort, 'high');
+
+  assert.equal((await B.req(MSG.ROOM_SETTINGS, { roomId: room.id, defaultModel: 'sonnet' })).error, 'FORBIDDEN');
+  for (const bad of [{ defaultModel: 'gpt-4' }, { defaultModel: 'claude-X' }, { defaultEffort: 'ultra' }, { defaultModel: 5 }]) {
+    assert.equal((await A.req(MSG.ROOM_SETTINGS, { roomId: room.id, ...bad })).error, 'INVALID_INPUT', JSON.stringify(bad));
+  }
+  // 허용 값: 풀 모델 이름, 빈 값(= 각자 설정). 주지 않은 값은 유지
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, defaultModel: 'claude-opus-4-7', defaultEffort: '' });
+  const now = (await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.room;
+  assert.deepEqual([now.defaultModel, now.defaultEffort], ['claude-opus-4-7', '']);
+  await A.ok(MSG.ROOM_SETTINGS, { roomId: room.id, defaultEffort: 'max' });
+  assert.equal((await A.ok(MSG.ROOM_OPEN, { roomId: room.id })).state.room.defaultModel, 'claude-opus-4-7');
+  await A.close();
+  await B.close();
+});
+
+test('GET /version: 서버 시작 때 정한 commit', async () => {
+  const r = await (await fetch(`${base()}/version`)).json();
+  assert.ok(r.commit === null || /^[0-9a-f]{4,}$/.test(r.commit));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-ver-'));
+  const s2 = await startServer({ port: 0, dataDir: dir, commit: 'abc1234' });
+  try {
+    assert.deepEqual(await (await fetch(`http://localhost:${s2.port}/version`)).json(), { commit: 'abc1234' });
+    assert.equal(s2.running(), 0);
+  } finally {
+    await s2.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

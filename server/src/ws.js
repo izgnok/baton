@@ -8,6 +8,12 @@ const CODE = /^[A-Z][A-Z0-9_]*$/;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const bad = () => new Error('INVALID_INPUT');
 
+// 이름 목록: 문자열만, 최대 20개·각 100자로 자른다
+function names(v) {
+  if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) throw bad();
+  return v.slice(0, 20).map((x) => x.slice(0, 100));
+}
+
 /**
  * 웹소켓 연결과 메시지 라우팅. 대기열도 여기서 만든다
  * @param {import('node:http').Server} server
@@ -16,6 +22,7 @@ const bad = () => new Error('INVALID_INPUT');
 export function attachWs(server, { db, files }) {
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 50 * 1024 * 1024 });
   const conns = new Map(); // userId → ws[] (인증 순서)
+  const memberStatus = new Map(); // roomId → Map<userId, 연결 요약> (메모리에만 둔다)
 
   const sendWs = (ws, payload) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -31,6 +38,7 @@ export function attachWs(server, { db, files }) {
       const list = conns.get(u);
       if (list?.length) sendWs(list[list.length - 1], { type: MSG.RUN_START, runStart });
     },
+    dispatchCancel: (u, requestId) => sendUser(u, { type: MSG.RUN_CANCEL, requestId }),
     broadcast,
   });
 
@@ -57,16 +65,26 @@ export function attachWs(server, { db, files }) {
     },
     [MSG.ROOM_OPEN]: (u, m) => {
       const roomId = Number(m.roomId);
-      return { state: R.getRoomState(db, u, roomId), messages: queue.listMessages(u, roomId) };
+      return {
+        state: R.getRoomState(db, u, roomId),
+        messages: queue.listMessages(u, roomId),
+        memberStatus: Object.fromEntries(memberStatus.get(roomId) ?? []),
+      };
     },
     [MSG.ROOM_LEAVE]: (u, m) => {
       const roomId = Number(m.roomId);
       R.leaveRoom(db, u, roomId);
+      memberStatus.get(roomId)?.delete(u);
       queue.onLeave(u, roomId);
       broadcastState(roomId);
     },
     [MSG.ROOM_RENAME]: (u, m) => {
       const room = R.renameRoom(db, u, Number(m.roomId), { name: m.name });
+      broadcastState(room.id);
+      return room;
+    },
+    [MSG.ROOM_SETTINGS]: (u, m) => {
+      const room = R.setRoomSettings(db, u, Number(m.roomId), m);
       broadcastState(room.id);
       return room;
     },
@@ -79,6 +97,7 @@ export function attachWs(server, { db, files }) {
       const roomId = Number(m.roomId);
       const members = memberIds(roomId);
       R.deleteRoom(db, u, roomId);
+      memberStatus.delete(roomId);
       files.removeRoom(roomId);
       members.forEach((id) => sendUser(id, { type: MSG.ROOM_DELETE, roomId }));
     },
@@ -101,6 +120,17 @@ export function attachWs(server, { db, files }) {
     },
     [MSG.CHAT_SEND]: (u, m) => queue.postMessage(u, Number(m.roomId), m.text),
     [MSG.REQUEST_RETRY]: (u, m) => queue.retry(u, Number(m.requestId)),
+    [MSG.REQUEST_CANCEL]: (u, m) => queue.cancel(u, Number(m.requestId)),
+    [MSG.MEMBER_STATUS]: (u, m) => {
+      const roomId = Number(m.roomId);
+      if (!R.isMember(db, u, roomId)) throw new Error('FORBIDDEN');
+      const s = m.status;
+      if (!s || typeof s !== 'object' || typeof s.claude !== 'boolean') throw bad();
+      const status = { repos: names(s.repos), readDirs: names(s.readDirs), claude: s.claude };
+      if (!memberStatus.has(roomId)) memberStatus.set(roomId, new Map());
+      memberStatus.get(roomId).set(u, status);
+      broadcast(roomId, { type: MSG.MEMBER_STATUS, roomId, userId: u, status });
+    },
     [MSG.RUN_EVENT]: (u, m) => {
       queue.appendEvent(ownRequest(u, m).requestId, m.event);
     },

@@ -356,3 +356,17 @@ claude-rooms/
 - [ ] **단계 1:** 맥1 에서 서버를 띄우고 두 맥에서 앱을 실행한다. 맥2 의 서버 주소는 `http://<맥1 IP>:4310`
 - [ ] **단계 2:** 설계 11장 수동 시나리오 ①~⑧ 을 차례로 하고 각각 통과·실패와 화면 캡처를 남긴다
 - [ ] **단계 3:** 실패 항목을 정리해 사용자와 다음 조치를 정한다
+
+---
+
+### 작업 14: 방 전용 작업 폴더(worktree)와 코드 자동 동기화 (2026-11-26 추가, 설계 결정 5·10·16·17·18, 6.1장)
+
+**파일:** 생성 `app/main/runner/worktree.js`, 테스트 `app/test/worktree.test.js`. 수정 `runner/preflight.js`(브랜치 확인 제거), `runner/turn.js`(실행 전 맞추기·실행 뒤 push), `main/index.js`(연결·정리·폴더 열기 IPC), `main/preload.cjs`, `renderer/views/room.js`(레포 탭·코드 동기화 한 줄), `renderer/format.js`(새 오류 문구)
+
+**인터페이스:**
+- `worktreePath(roomId, repo) → string` — `<roomsHome>/<roomId>/repos/<repo.id>-<safeDirName(repo.name)>`
+- `syncWorktree({sourcePath, worktreePath, branch}) → Promise<{head: string}>` — fetch → 없으면 `BRANCH_NOT_ON_REMOTE` → 작업 폴더 없으면 `worktree add --detach <wt> origin/<branch>` → 있으면 `rebase --autostash origin/<branch>`(충돌이면 abort 후 `SYNC_CONFLICT`)
+- `isProtectedBranch(branch) → boolean` — `/^(main|master|develop|production)$|^(release|hotfix)\//`
+- `commitMessage({branch, requesterName, body}) → string` — 이슈 키 `/[A-Z][A-Z0-9]+-\d+/` 가 브랜치에 있으면 `[키] claude: <요약> (요청: 이름)`, 요약은 body 첫 줄 50자
+- `pushChanges({worktreePath, branch, message}) → Promise<{status: 'pushed'|'nothing'|'protected'|'conflict'|'failed', commit?, error?}>`
+- `removeWorktree({sourcePath, worktreePath}) → Promise<{removed: boolean, reason?: 'DIRTY'|'UNPUSHED'}>`

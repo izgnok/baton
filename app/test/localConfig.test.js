@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { roomsHome, loadConfig, saveConfig, setRepoPath } from '../main/localConfig.js';
+import { roomsHome, loadConfig, saveConfig, setRepoPath, addReadDirs, removeReadDir, setRoomModel, effectiveModel } from '../main/localConfig.js';
 
 let home;
 beforeEach(() => {
@@ -41,4 +41,46 @@ test('setRepoPath 는 원본을 바꾸지 않고 다른 값은 유지', () => {
   const b = setRepoPath(a, 1, 2, '/p2');
   assert.deepEqual(a.rooms[1].repos, { 1: '/p1' });
   assert.deepEqual(b.rooms[1].repos, { 1: '/p1', 2: '/p2' });
+});
+
+test('repoIndex 는 저장 후 다시 읽어도 남고, 모양이 틀리면 버린다', () => {
+  const repoIndex = { scannedAt: 5, repos: [{ path: '/a', name: 'a', remoteUrl: '' }] };
+  saveConfig({ serverUrl: null, token: null, rooms: {}, repoIndex });
+  assert.deepEqual(loadConfig().repoIndex, repoIndex);
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ rooms: {}, repoIndex: { repos: 'x' } }));
+  assert.equal('repoIndex' in loadConfig(), false);
+});
+
+test('addReadDirs·removeReadDir: 중복 제거, 레포 연결은 유지, 원본은 바뀌지 않는다', () => {
+  const base = setRepoPath({ serverUrl: null, token: null, rooms: {} }, 1, 7, '/r');
+  const a = addReadDirs(base, 1, ['/x', '/y']);
+  const b = addReadDirs(a, 1, ['/y', '/z']);
+  assert.deepEqual(b.rooms[1], { repos: { 7: '/r' }, readDirs: ['/x', '/y', '/z'] });
+  assert.equal(base.rooms[1].readDirs, undefined);
+  assert.deepEqual(removeReadDir(b, 1, '/y').rooms[1].readDirs, ['/x', '/z']);
+  assert.deepEqual(addReadDirs({ rooms: {} }, 9, ['/q']).rooms[9], { repos: {}, readDirs: ['/q'] }); // 레포 없는 방
+  assert.equal(removeReadDir(base, 5, '/q'), base);
+  // 레포를 다시 연결해도 함께 읽는 폴더는 유지
+  assert.deepEqual(setRepoPath(b, 1, 8, '/r2').rooms[1].readDirs, ['/x', '/y', '/z']);
+});
+
+test('setRoomModel·effectiveModel: 개인 → 방 기본 → 없음, 각각 따로, 다른 값은 유지', () => {
+  const base = addReadDirs(setRepoPath({ serverUrl: null, token: null, rooms: {} }, 1, 7, '/r'), 1, ['/x']);
+  const room = { defaultModel: 'opus', defaultEffort: 'high' };
+  assert.deepEqual(effectiveModel(base, 1, room), { model: 'opus', effort: 'high' });
+  assert.deepEqual(effectiveModel(base, 1, { defaultModel: '', defaultEffort: '' }), { model: '', effort: '' });
+  const mine = setRoomModel(base, 1, 'sonnet', '');
+  assert.deepEqual(mine.rooms[1], { repos: { 7: '/r' }, readDirs: ['/x'], model: 'sonnet', effort: '' });
+  assert.deepEqual(effectiveModel(mine, 1, room), { model: 'sonnet', effort: 'high' }); // 노력만 방 기본
+  assert.equal(base.rooms[1].model, undefined);
+  assert.deepEqual(effectiveModel({ rooms: {} }, 9, undefined), { model: '', effort: '' });
+  assert.deepEqual(setRoomModel({ rooms: {} }, 3, 'haiku', 'max').rooms[3], { repos: {}, model: 'haiku', effort: 'max' });
+});
+
+test('usage 는 저장 후 다시 읽어도 남고, 모양이 틀리면 버린다', () => {
+  const usage = { fiveHour: { utilization: 0.2, resetsAt: 1, status: 'allowed' }, updatedAt: 5 };
+  saveConfig({ serverUrl: null, token: null, rooms: {}, usage });
+  assert.deepEqual(loadConfig().usage, usage);
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ rooms: {}, usage: [1] }));
+  assert.equal('usage' in loadConfig(), false);
 });

@@ -61,5 +61,10 @@ export function openDb(path) {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  // 옛 DB 에 없는 칸은 데이터를 둔 채 덧붙인다
+  const have = new Set(db.prepare('PRAGMA table_info(rooms)').all().map((c) => c.name));
+  for (const col of ['default_model', 'default_effort']) {
+    if (!have.has(col)) db.exec(`ALTER TABLE rooms ADD COLUMN ${col} TEXT`);
+  }
   return db;
 }
