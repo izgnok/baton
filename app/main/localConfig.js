@@ -30,6 +30,7 @@ export function loadConfig() {
       ...(v.user && typeof v.user === 'object' ? { user: v.user } : {}), // 마지막 로그인 사용자(있을 때만)
       ...(v.repoIndex && Array.isArray(v.repoIndex.repos) ? { repoIndex: v.repoIndex } : {}), // 내 PC 레포 목록
       ...(v.usage && typeof v.usage === 'object' && !Array.isArray(v.usage) ? { usage: v.usage } : {}), // 5시간·주간 사용률
+      ...(v.hostServer === true ? { hostServer: true } : {}), // 이 맥에서 서버 실행(Swift 앱)
     };
   } catch {
     return defaults();
