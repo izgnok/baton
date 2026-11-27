@@ -35,9 +35,15 @@ export async function pullFf(root) {
   const before = await git(root, ['rev-parse', 'HEAD']);
   await git(root, ['pull', '--ff-only', 'origin', 'main'], 120000);
   const after = await git(root, ['rev-parse', 'HEAD']);
-  const lockChanged = before !== after && (await git(root, ['diff', '--name-only', before, after, '--', 'package-lock.json'])) !== '';
-  return { before, after, lockChanged };
+  const changed = before === after ? [] : (await git(root, ['diff', '--name-only', before, after])).split('\n').filter(Boolean);
+  return { before, after, changed, lockChanged: changed.includes('package-lock.json') };
 }
+
+/** 두 커밋 사이에 바뀐 파일 경로 */
+export const changedBetween = async (root, from, to = 'HEAD') => (await git(root, ['diff', '--name-only', from, to])).split('\n').filter(Boolean);
+
+/** 맥 앱 다시 빌드(npm run mac, 10분 제한) */
+export const macBuild = (root) => run('npm', ['run', 'mac'], root, 10 * 60 * 1000);
 
 /** 루트에서 npm install(10분 제한) */
 export const npmInstall = (root) => run('npm', ['install'], root, 10 * 60 * 1000);

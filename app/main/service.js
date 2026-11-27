@@ -432,6 +432,7 @@ export function createService({ emit, relaunch }) {
       isBusy: () => runs.size > 0,
       relaunch: () => relaunch(),
       notify: (s) => toRenderer('update', s),
+      appCommit: process.env.ROOMS_APP_COMMIT || null, // 맥 앱이 넘겨 준 빌드 커밋
     });
     const background = !capture && !process.env.ROOMS_NO_BACKGROUND; // 테스트 등에서 ROOMS_NO_BACKGROUND=1 이면 바깥을 건드리는 작업을 돌리지 않는다
     if (background) updater.start();

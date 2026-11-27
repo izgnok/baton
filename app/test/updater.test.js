@@ -40,17 +40,18 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 function make(over = {}) {
   const notes = [];
-  const calls = { relaunch: 0, installs: [] };
+  const calls = { relaunch: 0, installs: [], builds: [] };
   const u = createUpdater({
     root: clone, isBusy: () => false, relaunch: () => { calls.relaunch++; },
-    notify: (s) => notes.push(s), install: async (r) => { calls.installs.push(r); }, log: quiet, ...over,
+    notify: (s) => notes.push(s), install: async (r) => { calls.installs.push(r); },
+    build: async (r) => { calls.builds.push(r); }, log: quiet, ...over,
   });
   return { u, notes, calls };
 }
 
 test('새 커밋이 없으면 알리지 않고, 있으면 개수·제목(최신순)을 알린다', async () => {
   const { u, notes } = make();
-  assert.deepEqual(await u.check(), { count: 0, subjects: [], serverMismatch: false });
+  assert.deepEqual(await u.check(), { count: 0, subjects: [], serverMismatch: false, rebuild: false });
   assert.equal(notes.length, 0);
   push('a.txt', '첫 변경');
   push('b.txt', '둘째 변경');
@@ -106,6 +107,49 @@ test('apply: install 이 실패하면 다시 켜지 않는다', async () => {
   g(pusher, 'push', '-q', 'origin', 'main');
   await assert.rejects(u.apply(), { message: 'UPDATE_INSTALL_FAILED' });
   assert.equal(calls.relaunch, 0);
+});
+
+test('apply: mac/ 이 바뀌면 맥 앱을 다시 빌드한 뒤 다시 켠다', async () => {
+  const { u, calls } = make();
+  fs.mkdirSync(path.join(pusher, 'mac'), { recursive: true });
+  push('a', 'mac 바뀜', 'mac/App.swift');
+  await u.apply();
+  assert.deepEqual(calls.builds, [clone]);
+  assert.equal(calls.relaunch, 1);
+});
+
+test('apply: mac/ 이 안 바뀌면 빌드하지 않는다', async () => {
+  const { u, calls } = make();
+  push('b', '서버만', 'server-only.txt');
+  await u.apply();
+  assert.deepEqual(calls.builds, []);
+  assert.equal(calls.relaunch, 1);
+});
+
+test('apply: 빌드가 실패하면 UPDATE_BUILD_FAILED, 다시 켜지 않는다', async () => {
+  const { u, calls } = make({ build: async () => { throw new Error('swiftc'); } });
+  push('c', 'mac 또 바뀜', 'mac/App.swift');
+  await assert.rejects(u.apply(), { message: 'UPDATE_BUILD_FAILED' });
+  assert.equal(calls.relaunch, 0);
+});
+
+test('앱을 빌드한 커밋 뒤로 mac/ 이 바뀌었으면(소스는 이미 최신) 다시 빌드가 필요하다고 알리고, apply 가 빌드한다', async () => {
+  const built = g(clone, 'rev-parse', '--short', 'HEAD');
+  push('d', 'mac 바뀜(서버 맥이 먼저 pull)', 'mac/App.swift');
+  g(clone, 'pull', '-q', '--ff-only', 'origin', 'main'); // 서버 관리 프로그램이 먼저 받아 둔 상황
+  const { u, calls } = make({ appCommit: built });
+  const st = await u.check();
+  assert.equal(st.count, 0);
+  assert.equal(st.rebuild, true);
+  await u.apply();
+  assert.deepEqual(calls.builds, [clone]);
+  assert.equal(calls.relaunch, 1);
+  // 앱 커밋이 지금 HEAD 와 같거나, 사이에 mac/ 변경이 없으면 다시 빌드할 필요 없음
+  assert.equal((await make({ appCommit: g(clone, 'rev-parse', '--short', 'HEAD') }).u.check()).rebuild, false);
+  const head = g(clone, 'rev-parse', '--short', 'HEAD');
+  push('e', '서버만 바뀜', 'server-only2.txt');
+  g(clone, 'pull', '-q', '--ff-only', 'origin', 'main');
+  assert.equal((await make({ appCommit: head }).u.check()).rebuild, false);
 });
 
 test('git 최상위가 아닌 폴더는 확인도 업데이트도 하지 않는다', async () => {

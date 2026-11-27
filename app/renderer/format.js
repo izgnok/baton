@@ -22,6 +22,7 @@ const ERROR_TEXT = {
   UPDATE_NOT_GIT: '앱 소스 폴더가 git 클론이 아니라 업데이트할 수 없어요',
   UPDATE_PULL_FAILED: '새 버전을 받지 못했어요',
   UPDATE_INSTALL_FAILED: '패키지 설치에 실패했어요',
+  UPDATE_BUILD_FAILED: '앱을 빌드하지 못했어요. 지금 버전을 그대로 써요(로그 ~/.claude-rooms/core.log)',
 };
 
 /** 화면 동작 실패 코드 → 문구 */

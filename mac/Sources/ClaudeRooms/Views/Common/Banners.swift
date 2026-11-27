@@ -18,11 +18,11 @@ struct Banners: View {
             if app.approvalBlocked {
                 bar(fill: Theme.warnSoft) { Text(SheetPolicy.bannerText).foregroundStyle(Theme.warnText) }
             }
-            if app.update.count > 0 || app.update.serverMismatch {
+            if app.update.available || app.update.serverMismatch {
                 // 둘 다 있으면 한 줄에 이어 붙인다(점검표 UB3)
                 bar(fill: app.update.serverMismatch ? Theme.warnSoft : Theme.accentSoft) {
-                    if app.update.count > 0 { updateSegment }
-                    if app.update.count > 0 && app.update.serverMismatch { Text("·").foregroundStyle(Theme.sub) }
+                    if app.update.available { updateSegment }
+                    if app.update.available && app.update.serverMismatch { Text("·").foregroundStyle(Theme.sub) }
                     if app.update.serverMismatch {
                         Text("서버 버전이 달라요 — 서버를 다시 켜 주세요").foregroundStyle(Theme.warnText)
                     }
@@ -34,8 +34,10 @@ struct Banners: View {
 
     private var updateSegment: some View {
         HStack(spacing: 8) {
-            Text("새 버전이 있어요 (커밋 \(app.update.count)개)").foregroundStyle(Theme.text)
-            Button("자세히") { app.showUpdateDetail = true }.buttonStyle(.rooms(.plain, .small))
+            Text(app.update.count > 0 ? "새 버전이 있어요 (커밋 \(app.update.count)개)" : "앱을 새로 빌드해야 해요").foregroundStyle(Theme.text)
+            if app.update.count > 0 {
+                Button("자세히") { app.showUpdateDetail = true }.buttonStyle(.rooms(.plain, .small))
+            }
             Button(app.updating ? "업데이트 중…" : "업데이트") { Task { await app.applyUpdate() } }
                 .buttonStyle(.rooms(.primary, .small))
                 .disabled(app.updating)

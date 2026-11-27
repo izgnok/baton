@@ -41,6 +41,9 @@ struct UpdateState: Equatable {
     var count = 0
     var subjects: [String] = []
     var serverMismatch = false
+    /// 소스는 최신인데 앱이 예전 커밋으로 빌드돼 있어 다시 빌드가 필요함
+    var rebuild = false
+    var available: Bool { count > 0 || rebuild }
 
     init() {}
 
@@ -48,6 +51,7 @@ struct UpdateState: Equatable {
         count = j?["count"]?.int ?? 0
         subjects = j?["subjects"]?.array?.compactMap(\.string) ?? []
         serverMismatch = j?["serverMismatch"]?.bool ?? false
+        rebuild = j?["rebuild"]?.bool ?? false
     }
 }
 
@@ -181,6 +185,10 @@ final class AppModel {
         if let p = loginPath { env["PATH"] = p }
         for key in ["ROOMS_HOME", "ROOMS_SCREENSHOT"] {
             if let v = ProcessInfo.processInfo.environment[key] { env[key] = v }
+        }
+        // 이 앱을 빌드한 커밋. 서버 관리 프로그램이 소스를 먼저 받아 둬도 다시 빌드가 필요한지 코어가 안다
+        if let commit = Bundle.main.object(forInfoDictionaryKey: "RoomsCommit") as? String, commit != "unknown" {
+            env["ROOMS_APP_COMMIT"] = commit
         }
         let c = CoreClient(CoreLaunch(
             executable: URL(fileURLWithPath: node),
@@ -417,7 +425,7 @@ final class AppModel {
     func checkUpdate() async {
         guard let j = try? await call("checkUpdate") else { return }
         update = UpdateState(j)
-        if update.count == 0 { toast("최신 버전이에요") }
+        if !update.available { toast("최신 버전이에요") }
     }
 
     /// 업데이트 적용. 실패 문구는 call 이 토스트로 알린다

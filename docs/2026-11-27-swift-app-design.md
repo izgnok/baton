@@ -75,7 +75,7 @@ Dock 에서 켠 앱은 PATH 에 Homebrew 경로가 없다. 앱 시작 때 `$SHEL
 ## 6. 빌드·업데이트·서버
 
 - `npm run mac` → `mac/build.sh`: `swiftc -O` 로 RoomsKit·앱 소스를 한 실행 파일로 빌드 → `Claude Rooms.app` 조립(Info.plist 에 이름·번들 ID·소스 폴더 경로·커밋, 아이콘, 글꼴) → `~/Applications/Claude Rooms.app` 으로 교체.
-- 업데이트(코어 `updater`): 지금 순서에 한 단계 추가 — `git pull --ff-only` 로 `mac/` 이 바뀌었으면 `npm run mac` 을 돌리고 성공해야 다시 켠다. 빌드 실패면 다시 켜지 않고 "빌드 실패(로그)"를 알린다(지금 버전은 그대로 동작). 소스에 로컬 수정이 있거나 Claude 실행 중이면 지금처럼 멈추거나 기다린다.
+- 업데이트(코어 `updater`): 지금 순서에 한 단계 추가 — `git pull --ff-only` 로 `mac/` 이 바뀌었으면 `npm run mac` 을 돌리고 성공해야 다시 켠다. 빌드 실패면 다시 켜지 않고 "빌드 실패(로그)"를 알린다(지금 버전은 그대로 동작). 앱은 자기를 빌드한 커밋(Info.plist `RoomsCommit`)을 코어에 넘긴다(`ROOMS_APP_COMMIT`). 서버를 켜 둔 맥에서는 관리 프로그램이 같은 소스를 먼저 pull 하므로, 받을 커밋이 0개여도 빌드 커밋 뒤로 `mac/` 이 바뀌었으면 "앱을 새로 빌드해야 해요" 띠와 [업데이트]로 알린다. 소스에 로컬 수정이 있거나 Claude 실행 중이면 지금처럼 멈추거나 기다린다.
 - 서버 호스트: 설정의 [이 맥에서 서버 실행]을 켜면 앱이 `node server/src/supervisor.js` 를 자식으로 띄우고 로그는 `~/.claude-rooms/server.log`. 켜기 전에 4310 포트를 이미 누가 쓰면 켜지 않고 알린다. 앱을 ⌘Q 로 끄면 서버도 꺼진다(스위치 옆에 적음). 설정은 `~/.claude-rooms/config.json` 의 `hostServer`.
 - `npm run host`·`start:raw` 는 남긴다(터미널로 서버만 켜는 경우).
 
