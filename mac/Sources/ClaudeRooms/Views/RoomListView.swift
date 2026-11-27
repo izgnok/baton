@@ -30,6 +30,9 @@ struct RoomListView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Spacer()
+                if app.serverHost.state == .running {
+                    Text("서버 실행 중").typo(.caption).foregroundStyle(Theme.successText).padding(.trailing, 6)
+                }
                 Button(checking ? "확인 중…" : "업데이트 확인") {
                     checking = true
                     Task {

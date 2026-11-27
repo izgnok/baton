@@ -130,5 +130,10 @@ export function startSupervisor({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const sup = startSupervisor({ intervalMs: Number(process.env.SUPERVISOR_INTERVAL_MS) || undefined });
-  for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => sup.stop().then(() => process.exit(0)));
+  const quit = () => sup.stop().then(() => process.exit(0));
+  for (const s of ['SIGINT', 'SIGTERM']) process.on(s, quit);
+  // 맥 앱이 띄운 경우: 앱과 이어진 stdin 이 끊기면(앱이 강제 종료돼도) 서버를 끄고 끝난다
+  if (process.env.ROOMS_EXIT_WITH_PARENT === '1') {
+    process.stdin.on('end', quit).on('close', quit).resume();
+  }
 }

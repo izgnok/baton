@@ -14,6 +14,8 @@ struct ClaudeRoomsApp: App {
         .defaultSize(width: 1100, height: 728)
         .windowResizability(.contentMinSize)
         .commands { CommandGroup(replacing: .newItem) {} }
+
+        Settings { SettingsView(app: app) }
     }
 }
 

@@ -96,6 +96,9 @@ final class AppModel {
     /// 방 목록 첫 읽기가 끝났는지(캡처가 기다린다)
     var roomsLoaded = false
     var claudeLoaded = false
+    /// 설정의 [이 맥에서 서버 실행] 스위치(코어의 config.hostServer)
+    var hostServerOn = false
+    let serverHost = ServerHost(home: AppModel.homeDir)
 
     @ObservationIgnored private var client: CoreClient?
     @ObservationIgnored private var restart = RestartPolicy()
@@ -105,6 +108,8 @@ final class AppModel {
     @ObservationIgnored private var nodePath: String?
     @ObservationIgnored private var loginPath: String?
     @ObservationIgnored private var capture: CaptureDriver?
+    @ObservationIgnored private var hostAutoStarted = false
+    @ObservationIgnored private var signalSources: [DispatchSourceSignal] = []
     @ObservationIgnored let approvalPresenter = ApprovalPresenter()
     /// 지금 열린 방 화면(캡처가 화면 조작을 넘긴다)
     @ObservationIgnored weak var currentRoom: RoomModel?
@@ -125,6 +130,15 @@ final class AppModel {
     init() {
         if let dir = ProcessInfo.processInfo.environment["ROOMS_SCREENSHOT"], !dir.isEmpty {
             capture = CaptureDriver(dir: URL(fileURLWithPath: dir), app: self)
+        }
+        serverHost.notify = { [weak self] in self?.toast($0) }
+        // SIGTERM·SIGINT 로 끌 때도 정상 종료(willTerminate)를 거쳐 서버를 정리한다
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            src.setEventHandler { NSApp.terminate(nil) }
+            src.resume()
+            signalSources.append(src)
         }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.shutdown() }
@@ -206,6 +220,24 @@ final class AppModel {
     func shutdown() {
         stopping = true
         client?.stop()
+        serverHost.stop(wait: true)
+    }
+
+    /// 설정 스위치. 저장하고 서버를 켜거나 끈다
+    func setHostServer(_ on: Bool) {
+        hostServerOn = on
+        Task { _ = try? await call("setHostServer", .object(["on": .bool(on)])) }
+        if on { startServer() } else { serverHost.stop() }
+    }
+
+    private func startServer() {
+        guard capture == nil else { return } // 캡처 모드에서는 서버를 띄우지 않는다
+        guard let node = nodePath else { toast("서버를 켜려면 Node.js가 필요해요"); return }
+        guard let source = Self.sourceRoot, FileManager.default.fileExists(atPath: "\(source)/server/src/supervisor.js") else {
+            toast("서버 소스 폴더를 찾지 못했어요")
+            return
+        }
+        serverHost.start(node: node, source: URL(fileURLWithPath: source), loginPath: loginPath)
     }
 
     /// 코어가 뜬 뒤 처음 읽을 것: 사용량·업데이트(기다리지 않음)와 로그인 상태
@@ -219,6 +251,11 @@ final class AppModel {
         guard let cfg = try? await call("getConfig", toast: false) else { return }
         user = cfg["user"].flatMap { if case .object = $0 { $0 } else { nil } }
         connected = true
+        hostServerOn = cfg["hostServer"]?.bool ?? false
+        if hostServerOn && !hostAutoStarted {
+            hostAutoStarted = true
+            startServer()
+        }
         // 캡처 모드는 장면이 화면을 정한다
         guard capture == nil else { return }
         if cfg["loggedIn"]?.bool == true { screen = .rooms }
