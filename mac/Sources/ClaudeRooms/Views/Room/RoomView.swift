@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 방 화면: 머리줄 · 채팅 · (입력 자리) · 오른쪽 패널 자리
+/// 방 화면: 머리줄 · 채팅 · 입력창 · 오른쪽 패널 자리
 struct RoomView: View {
     let app: AppModel
     @Local private var model: RoomModel
@@ -19,7 +19,7 @@ struct RoomView: View {
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     ChatView(model: model)
-                    composerPlaceholder
+                    Composer(model: model)
                 }
                 Rectangle().fill(Theme.line).frame(width: 1)
                 panel.frame(width: 300)
@@ -57,17 +57,6 @@ struct RoomView: View {
         .padding(.leading, 76) // 왼쪽 위 신호등 버튼 자리
         .padding(.trailing, 16)
         .frame(height: 52)
-    }
-
-    // MARK: 입력 자리(다음 단계에서 Composer 로 바뀐다)
-
-    private var composerPlaceholder: some View {
-        VStack(spacing: 0) {
-            Rectangle().fill(Theme.line).frame(height: 1)
-            Text("메시지 입력은 곧 열려요").typo(.ui).foregroundStyle(Theme.sub)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(height: 104)
     }
 
     // MARK: 오른쪽 패널 자리(탭 이름만. 내용은 다음 단계)

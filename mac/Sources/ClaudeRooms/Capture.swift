@@ -72,12 +72,16 @@ final class CaptureDriver {
         }
     }
 
-    /// 장면의 ui: codeDiffOpen(diff 펼침·접힘), scrollTo('top'·'codeCard')
+    /// 장면의 ui: codeDiffOpen(diff 펼침·접힘), scrollTo('top'·'codeCard'), composer(입력창 글)
     private func applyUI(_ ui: JSON) async {
         guard let room = app.currentRoom else { return }
         if let open = ui["codeDiffOpen"]?.bool {
             room.setAllDiffs(open: open)
             try? await Task.sleep(for: .milliseconds(100))
+        }
+        if let text = ui["composer"]?.string {
+            room.composer.setText(text)
+            try? await Task.sleep(for: .milliseconds(700)) // 레포 파일 검색(200ms 디바운스)
         }
         switch ui["scrollTo"]?.string {
         case "codeCard": room.scroll(.codeCard)

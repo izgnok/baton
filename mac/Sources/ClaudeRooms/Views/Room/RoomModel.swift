@@ -144,11 +144,14 @@ final class RoomModel {
     @ObservationIgnored private var loading = false
     @ObservationIgnored private var buffer: [CoreEvent] = []
     @ObservationIgnored private var scrollSerial = 0
+    /// 입력창 상태(글·대상·자동완성). init 끝에서 만든다
+    @ObservationIgnored private(set) var composer: ComposerModel!
 
     init(roomId: Int, app: AppModel, tab: String = "repos") {
         self.roomId = roomId
         self.app = app
         self.tab = tab
+        composer = ComposerModel(room: self, app: app)
     }
 
     // MARK: 파생 값
@@ -156,6 +159,12 @@ final class RoomModel {
     var me: Int? { app.user?["id"]?.int }
     var roomName: String { state?["room"]?["name"]?.string ?? app.roomNames[roomId] ?? "" }
     var memberCount: Int { state?["members"]?.array?.count ?? 0 }
+    /// 나를 뺀 멤버 이름(@ 자동완성)
+    var memberNames: [String] {
+        (state?["members"]?.array ?? []).filter { $0["userId"]?.int != me }.compactMap { $0["name"]?.string }
+    }
+    var defaultModel: String { state?["room"]?["defaultModel"]?.string ?? "" }
+    var defaultEffort: String { state?["room"]?["defaultEffort"]?.string ?? "" }
     var isOwner: Bool {
         state?["members"]?.array?.contains { $0["userId"]?.int == me && $0["isOwner"]?.bool == true } ?? false
     }
@@ -222,6 +231,9 @@ final class RoomModel {
             guard let json = p["message"], let m = ChatMessage(json), json["roomId"]?.int == roomId else { return }
             if buffered, let old = messages.first(where: { $0.id == m.id }), Self.rank(m.status) < Self.rank(old.status) { return }
             upsert(m)
+            if m.kind == "claude_request", m.status == "done" { composer.invalidateShared() } // Claude 가 만든 파일이 공유 목록에 생겼을 수 있다
+        case "shared.changed":
+            if p["roomId"]?.int == roomId { composer.invalidateShared() }
         case "room.state":
             if p["state"]?["room"]?["id"]?.int == roomId { state = p["state"] }
         case "room.delete":
@@ -232,7 +244,7 @@ final class RoomModel {
         case "member.status":
             if p["roomId"]?.int == roomId, let uid = p["userId"]?.int { memberStatus[uid] = Self.memberStatus(p["status"]) }
         default:
-            break // local.repos·shared.changed·local.sharedConflict 는 오른쪽 패널(다음 단계)에서
+            break // local.repos·local.sharedConflict 는 오른쪽 패널(다음 단계)에서
         }
         if !buffered { rebuild() }
     }
@@ -255,6 +267,22 @@ final class RoomModel {
     private func upsert(_ m: ChatMessage) {
         if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m }
         else { messages.append(m); messages.sort { $0.id < $1.id } }
+    }
+
+    // MARK: 보내기·내 모델 선택
+
+    /// sendMessage 가 돌려준 메시지를 바로 채팅에 넣는다(알림이 오기 전에도 보이게)
+    func didSend(_ json: JSON) {
+        guard let m = ChatMessage(json) else { return }
+        upsert(m)
+        rebuild()
+        stick = true
+    }
+
+    /// 내 모델·노력 선택을 이 맥에 저장한다(빈 값 = 방 기본)
+    func saveMyModel(model: String, effort: String) {
+        myModel = (model, effort)
+        Task { _ = try? await app.call("setRoomModel", .object(["roomId": .number(Double(roomId)), "model": .string(model), "effort": .string(effort)])) }
     }
 
     // MARK: 요청 중단·다시 보내기

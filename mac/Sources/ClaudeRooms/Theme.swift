@@ -39,6 +39,8 @@ enum Theme {
     static let warnText = Color(light: 0x9A5A00, dark: 0xFFB340)
     static let warnSoft = Color(light: 0xFFF1D6, dark: 0x3A2A1A)
     static let bannerWarnText = Color(light: 0x3B2A00, dark: 0x3B2A00)
+    /// [Claude/사람] 전환의 선택된 칸(다크에서 바탕보다 밝게)
+    static let segOn = Color(light: 0xFFFFFF, dark: 0x3A3A45)
     static let usageTrack = Color(light: 0xE5E8EB, dark: 0x3A3A45)
 }
 
